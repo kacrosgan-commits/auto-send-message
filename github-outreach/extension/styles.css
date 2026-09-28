@@ -1,0 +1,90 @@
+.gho-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.gho-email,
+.gho-btn,
+.gho-note {
+  border: 1px solid var(--borderColor-default, #30363d);
+  background: var(--bgColor-muted, #161b22);
+  color: var(--fgColor-default, #f0f6fc);
+  border-radius: 6px;
+}
+
+.gho-email,
+.gho-btn {
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.gho-email:hover,
+.gho-btn:hover { background: var(--bgColor-emphasis, #21262d); }
+
+.gho-email.gho-empty,
+.gho-note {
+  color: var(--fgColor-muted, #8b949e);
+  cursor: default;
+}
+
+.gho-btn.gho-added { color: var(--fgColor-success, #3fb950); }
+
+.gho-note { padding: 2px 8px; }
+
+#gho-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 260px;
+  z-index: 80;
+  background: var(--bgColor-default, #0d1117);
+  color: var(--fgColor-default, #f0f6fc);
+  border: 1px solid var(--borderColor-default, #30363d);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+#gho-panel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: grab;
+  border-bottom: 1px solid var(--borderColor-muted, #30363d);
+  font-weight: 600;
+}
+
+#gho-panel.gho-collapsed header { border-bottom: 0; }
+#gho-panel.gho-collapsed .gho-panel-body { display: none; }
+
+.gho-panel-body { padding: 10px 12px 12px; }
+.gho-stat { display: flex; justify-content: space-between; color: var(--fgColor-muted, #8b949e); margin: 2px 0; }
+.gho-stat strong { color: var(--fgColor-default, #f0f6fc); font-weight: 600; }
+.gho-offline { color: var(--fgColor-danger, #f85149); margin: 6px 0; }
+.gho-online { color: var(--fgColor-success, #3fb950); margin: 6px 0; }
+.gho-open, .gho-icon-btn {
+  border: 1px solid var(--button-primary-bgColor-rest, #2f81f7);
+  background: var(--button-primary-bgColor-rest, #2f81f7);
+  color: var(--button-primary-fgColor-rest, #ffffff);
+  border-radius: 6px;
+  padding: 5px 10px;
+  width: 100%;
+  margin-top: 8px;
+  cursor: pointer;
+}
+.gho-icon-btn {
+  width: auto;
+  margin: 0;
+  padding: 0 8px;
+  background: transparent;
+  color: var(--fgColor-default, #f0f6fc);
+  border-color: var(--borderColor-default, #30363d);
+}
