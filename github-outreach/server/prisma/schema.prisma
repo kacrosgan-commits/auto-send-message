@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum ContactStatus {
+  NEW
+  DRAFTED
+  APPROVED
+  SENT
+  REPLIED
+  FAILED
+  OPTED_OUT
+  DO_NOT_CONTACT
+}
+
+enum OutreachStatus {
+  DRAFTED
+  APPROVED
+  SENT
+  FAILED
+}
+
+model Contact {
+  id              String        @id @default(cuid())
+  username        String
+  displayName     String?
+  email           String        @unique
+  githubUrl       String
+  avatarUrl       String?
+  bio             String?
+  company         String?
+  location        String?
+  searchKeyword   String?
+  source          String        @default("github")
+  status          ContactStatus @default(NEW)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  lastContactedAt DateTime?
+  contactAttempts Int           @default(0)
+  outreaches      Outreach[]
+
+  @@index([username])
+  @@index([status])
+  @@index([searchKeyword])
+  @@index([createdAt])
+}
+
+model Template {
+  id         String     @id @default(cuid())
+  name       String
+  subject    String
+  body       String
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  outreaches Outreach[]
+}
+
+model Outreach {
+  id             String         @id @default(cuid())
+  contactId      String
+  templateId     String?
+  subject        String
+  body           String
+  status         OutreachStatus @default(DRAFTED)
+  gmailDraftId   String?
+  gmailMessageId String?
+  createdAt      DateTime       @default(now())
+  approvedAt     DateTime?
+  sentAt         DateTime?
+  failureReason  String?
+  contact        Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  template       Template?      @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([contactId])
+  @@index([status])
+  @@index([sentAt])
+}
+
+model GoogleCredential {
+  id                    String   @id @default(cuid())
+  accountEmail          String?
+  accessTokenEncrypted  String
+  refreshTokenEncrypted String
+  scope                 String?
+  expiresAt             DateTime
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
