@@ -7,32 +7,15 @@ import {
   getSummary,
   listContacts,
   lookupContacts,
+  normalizeContactPayload,
   saveContact,
   updateContact,
 } from '../services/contact.service';
+import { maskEmail } from '../utils/email';
+import { logger } from '../utils/logger';
 import { CONTACT_STATUSES, type ContactStatus } from '../types';
 
 export const contactsRouter = Router();
-
-const contactBody = z.object({
-  username: z
-    .string()
-    .trim()
-    .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/, 'Enter a valid GitHub username.'),
-  displayName: z.string().trim().max(200).optional().nullable(),
-  email: z.string().trim().min(3).max(320),
-  githubUrl: z
-    .string()
-    .trim()
-    .url()
-    .refine((value) => /^https:\/\/github\.com\/[A-Za-z0-9-]+\/?$/.test(value), 'GitHub profile URL is required.'),
-  avatarUrl: z.union([z.string().trim().url().max(2000), z.literal(''), z.null()]).optional(),
-  bio: z.string().trim().max(4000).optional().nullable(),
-  location: z.string().trim().max(200).optional().nullable(),
-  company: z.string().trim().max(200).optional().nullable(),
-  searchKeyword: z.string().trim().max(200).optional().nullable(),
-  source: z.literal('github').optional(),
-});
 
 const listQuery = z.object({
   status: z.enum(CONTACT_STATUSES).optional(),
@@ -96,9 +79,11 @@ contactsRouter.get(
 
 contactsRouter.post(
   '/',
-  validate({ body: contactBody }),
   asyncRoute(async (req, res) => {
-    const result = await saveContact(req.body);
+    logger.info('[Contacts] POST /api/contacts');
+    const input = normalizeContactPayload(req.body);
+    logger.info(`[Contacts] Creating ${input.username} ${maskEmail(input.email)}`);
+    const result = await saveContact(input);
     res.status(result.created ? 201 : 200).json(result);
   }),
 );

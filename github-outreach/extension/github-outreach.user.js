@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         GitHub Outreach
 // @namespace    http://localhost:3847
-// @version      1.1.0
+// @version      1.2.0
 // @description  Show public GitHub profile emails and save them to a local outreach list
 // @match        https://github.com/search*
 // @run-at       document-idle
@@ -18,7 +18,7 @@
 (function () {
   'use strict';
 
-  const API = 'http://localhost:3847';
+  const API_BASE = 'http://localhost:3847';
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
   const MAX_CONCURRENT = 2;
   const STYLE = `
@@ -29,7 +29,7 @@
     .gho-email.gho-empty, .gho-note { color: var(--fgColor-muted, #8b949e); cursor: default; }
     .gho-btn.gho-added { color: var(--fgColor-success, #3fb950); }
     .gho-note { padding: 2px 8px; }
-    #gho-panel { position: fixed; right: 16px; bottom: 16px; width: 260px; z-index: 80; background: var(--bgColor-default, #0d1117); color: var(--fgColor-default, #f0f6fc); border: 1px solid var(--borderColor-default, #30363d); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.28); font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    #gho-panel { position: fixed; right: 16px; bottom: 16px; width: 280px; z-index: 80; background: var(--bgColor-default, #0d1117); color: var(--fgColor-default, #f0f6fc); border: 1px solid var(--borderColor-default, #30363d); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.28); font: 12px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     #gho-panel header { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px; cursor: grab; border-bottom: 1px solid var(--borderColor-muted, #30363d); font-weight: 600; }
     #gho-panel.gho-collapsed header { border-bottom: 0; }
     #gho-panel.gho-collapsed .gho-panel-body { display: none; }
@@ -294,47 +294,80 @@
   }
 
   function addOutreach(username, buttonNode, row) {
+    console.info(`[GitHub Outreach] Add clicked: ${username}`);
     const profile = profiles.get(username);
-    if (!profile?.email) return;
-    buttonNode.disabled = true;
-    buttonNode.textContent = 'Adding…';
-    console.info(`[GitHub Outreach] Adding contact: ${username}`);
-    api('POST', '/api/contacts', {
-      username: profile.username,
-      displayName: profile.displayName || profile.username,
+    if (!profile?.email) {
+      console.error('[GitHub Outreach] Backend request failed: public email was not available for this profile');
+      showAddFailed(row, buttonNode, username, 'Add failed');
+      return;
+    }
+    const payload = {
+      username: profile.username || username,
+      displayName: profile.displayName || profile.username || username,
       email: profile.email,
-      githubUrl: profile.githubUrl,
-      avatarUrl: profile.avatarUrl,
+      githubUrl: profile.githubUrl || `https://github.com/${profile.username || username}`,
+      avatarUrl: profile.avatarUrl || null,
       bio: profile.bio || null,
       location: profile.location || null,
       company: profile.company || null,
-      searchKeyword: searchKeyword(),
+      searchKeyword: searchKeyword() || null,
       source: 'github',
-    }).then((result) => {
-      savedEmails.add(profile.email);
+    };
+    buttonNode.disabled = true;
+    buttonNode.textContent = 'Adding…';
+    console.info(`[GitHub Outreach] Adding contact: ${payload.username}`);
+    request('POST', '/api/contacts', payload).then(async (result) => {
+      if (![200, 201].includes(result.status) || result.data?.success !== true) {
+        const error = new Error(result.data?.message || result.data?.error || 'Add failed');
+        error.status = result.status;
+        error.body = result.data;
+        throw error;
+      }
+      const email = String(result.data.contact?.email || payload.email).trim().toLowerCase();
+      const listed = await api('GET', '/api/contacts');
+      const found = (listed.contacts || []).some((contact) => String(contact.email || '').toLowerCase() === email);
+      if (!found) {
+        console.error('[GitHub Outreach] Backend request failed: Contact verification failed');
+        showAddFailed(row, buttonNode, username, 'Contact verification failed');
+        return;
+      }
+      savedEmails.add(email);
       buttonNode.className = 'gho-btn gho-added';
       buttonNode.textContent = '✓ Added';
       buttonNode.disabled = true;
-      if (result?.duplicate) {
+      row.querySelector('.gho-retry')?.remove();
+      if (result.data.duplicate || result.data.created === false) {
         console.info('[GitHub Outreach] Contact already exists');
         setNote(row, 'Already in outreach');
       } else {
         console.info('[GitHub Outreach] Contact added successfully');
+        row.querySelector('.gho-note')?.remove();
       }
       serverOnline = true;
       refreshStats();
       updatePanel();
     }).catch((error) => {
-      buttonNode.disabled = false;
-      buttonNode.textContent = '+ Outreach';
-      const message = error?.message || 'Request failed';
-      console.error(`[GitHub Outreach] Backend request failed: ${message}`);
-      setNote(row, message === 'offline' ? 'Outreach server offline' : message);
-      if (message === 'offline') {
+      console.error(`[GitHub Outreach] Backend request failed: ${error?.message || 'Request failed'}`);
+      if (error?.status) console.error(`[GitHub Outreach] POST status: ${error.status}`);
+      if (error?.body) console.error('[GitHub Outreach] POST response:', error.body);
+      showAddFailed(row, buttonNode, username, 'Add failed');
+      if (error?.message === 'offline') {
         serverOnline = false;
         updatePanel();
       }
     });
+  }
+
+  function showAddFailed(row, buttonNode, username, message) {
+    buttonNode.disabled = false;
+    buttonNode.className = 'gho-btn';
+    buttonNode.textContent = '+ Outreach';
+    setNote(row, message);
+    if (!row.querySelector('.gho-retry')) {
+      const retry = button('Retry', () => addOutreach(username, buttonNode, row));
+      retry.classList.add('gho-retry');
+      row.append(retry);
+    }
   }
 
   function copyEmail(badge, email) {
@@ -455,8 +488,8 @@
     const body = panel?.querySelector('.gho-panel-body');
     if (!body) return;
     body.replaceChildren();
-    body.append(stat('Selected', serverStats ? String(serverStats.total) : '—'));
     body.append(stat('Public email', String(panelCounts.publicEmail)));
+    body.append(stat('Added to Outreach', serverStats ? String(serverStats.total) : '—'));
     body.append(stat('Drafted', serverStats ? String(serverStats.drafted) : '—'));
     body.append(stat('Sent', serverStats ? String(serverStats.sent) : '—'));
     if (serverOnline === true) {
@@ -484,7 +517,7 @@
     open.type = 'button';
     open.className = 'gho-open';
     open.textContent = 'Open Outreach';
-    open.addEventListener('click', () => window.open(API, '_blank', 'noopener'));
+    open.addEventListener('click', () => window.open(API_BASE, '_blank', 'noopener'));
     body.append(open);
   }
 
@@ -542,48 +575,44 @@
   }
 
   function api(method, path, body) {
-    const url = `${API}${path}`;
-    const headers = { Accept: 'application/json' };
-    if (body) headers['Content-Type'] = 'application/json';
-    if (typeof GM_xmlhttpRequest === 'function') {
-      return gmRequest(method, url, headers, body).catch(() => pageRequest(method, url, headers, body));
-    }
-    return pageRequest(method, url, headers, body);
+    return request(method, path, body).then((result) => result.data);
   }
 
-  function gmRequest(method, url, headers, body) {
+  function request(method, path, body) {
+    if (typeof GM_xmlhttpRequest !== 'function') {
+      return Promise.reject(new Error('GM_xmlhttpRequest is not available. Reinstall the userscript with the GM_xmlhttpRequest grant.'));
+    }
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method,
-        url,
-        headers,
-        data: body ? JSON.stringify(body) : undefined,
-        timeout: 8000,
-        onload: (response) => {
-          let data = {};
-          try { data = response.responseText ? JSON.parse(response.responseText) : {}; } catch { data = {}; }
-          if (response.status >= 200 && response.status < 300) resolve(data);
-          else reject(new Error(data.error || `HTTP ${response.status || 0}`));
+        url: `${API_BASE}${path}`,
+        headers: {
+          Accept: 'application/json',
+          ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         },
-        onerror: () => reject(new Error('offline')),
-        ontimeout: () => reject(new Error('offline')),
+        data: body !== undefined ? JSON.stringify(body) : undefined,
+        timeout: 8000,
+        onload(response) {
+          let data = {};
+          const raw = response.responseText || '';
+          try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
+          const status = response.status || 0;
+          if (method === 'POST') {
+            console.info(`[GitHub Outreach] POST status: ${status}`);
+            console.info('[GitHub Outreach] POST response:', data);
+          }
+          if (status >= 200 && status < 300) {
+            resolve({ status, data });
+            return;
+          }
+          const error = new Error(data.message || data.error || `HTTP ${status}`);
+          error.status = status;
+          error.body = data;
+          reject(error);
+        },
+        onerror() { reject(new Error('offline')); },
+        ontimeout() { reject(new Error('offline')); },
       });
-    });
-  }
-
-  function pageRequest(method, url, headers, body) {
-    return fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    }).then(async (response) => {
-      let data = {};
-      try { data = await response.json(); } catch { data = {}; }
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-      return data;
-    }).catch((error) => {
-      if (error instanceof TypeError) throw new Error('offline');
-      throw error;
     });
   }
 

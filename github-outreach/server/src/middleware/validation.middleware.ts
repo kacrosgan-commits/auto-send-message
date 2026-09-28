@@ -19,10 +19,12 @@ export function validate(schemas: { body?: ZodTypeAny; query?: ZodTypeAny; param
       next();
     } catch (error) {
       if (error instanceof ZodError) {
-        const message = error.issues
-          .map((issue) => `${issue.path.join('.') || 'value'}: ${issue.message}`)
-          .join('; ');
-        next(new AppError(400, message, 'VALIDATION'));
+        const details = error.issues.map((issue) => ({
+          path: issue.path.join('.') || 'value',
+          message: issue.message,
+        }));
+        const message = details.map((issue) => `${issue.path}: ${issue.message}`).join('; ');
+        next(new AppError(400, message, 'VALIDATION', details));
         return;
       }
       next(error);

@@ -25,6 +25,7 @@ const state = {
   banner: null,
   modal: null,
   busy: false,
+  refreshLabel: '',
 };
 
 const VIEWS = [
@@ -69,8 +70,19 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') scheduleRefresh();
 });
 window.addEventListener('focus', scheduleRefresh);
+window.setInterval(() => {
+  if (document.visibilityState !== 'visible' || state.modal || state.busy) return;
+  refreshAll('poll');
+}, 10000);
 
-async function refreshAll() {
+async function refreshAll(reason) {
+  const manual = reason === 'manual';
+  if (manual) {
+    console.info('[Dashboard] Refresh clicked');
+    state.refreshLabel = 'Refreshing...';
+    render();
+  }
+  console.info('[Dashboard] GET /api/contacts');
   try {
     const [summary, contacts, templates, auth] = await Promise.all([
       api('/api/stats'),
@@ -79,7 +91,8 @@ async function refreshAll() {
       api('/api/auth/status'),
     ]);
     state.summary = summary;
-    state.contacts = contacts.contacts;
+    state.contacts = Array.isArray(contacts.contacts) ? contacts.contacts : [];
+    console.info(`[Dashboard] Contacts received: ${state.contacts.length}`);
     state.templates = templates.templates;
     state.variables = templates.variables;
     state.auth = auth;
@@ -90,10 +103,20 @@ async function refreshAll() {
     if (state.view === 'contact' && state.contact) {
       state.contact = (await api(`/api/contacts/${state.contact.id}`)).contact;
     }
+    if (manual) state.refreshLabel = 'Updated';
   } catch (error) {
+    if (manual) state.refreshLabel = 'Refresh failed';
     state.banner = { type: 'error', text: error.message };
   }
   render();
+  if (manual) {
+    window.setTimeout(() => {
+      if (state.refreshLabel === 'Updated' || state.refreshLabel === 'Refresh failed') {
+        state.refreshLabel = '';
+        render();
+      }
+    }, 1600);
+  }
 }
 
 async function loadOutreach() {
@@ -127,7 +150,7 @@ async function api(path, options = {}) {
       throw new Error('The outreach server returned an unreadable response.');
     }
   }
-  if (!response.ok) throw new Error(data.error || 'Request failed.');
+  if (!response.ok) throw new Error(data.message || data.error || 'Request failed.');
   return data;
 }
 
@@ -143,7 +166,7 @@ function shell() {
         h('p', { class: 'subtitle' }, 'Public GitHub emails, reviewed locally, sent only after you approve.'),
       ]),
       h('div', { class: 'header-actions' }, [
-        h('button', { class: 'btn', onclick: () => refreshAll() }, 'Refresh'),
+        h('button', { class: 'btn', onclick: () => refreshAll('manual') }, state.refreshLabel || 'Refresh'),
         connectionPill(),
       ]),
     ]),

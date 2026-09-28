@@ -40,13 +40,18 @@ export function securityMiddleware(req: Request, res: Response, next: NextFuncti
   res.setHeader('Access-Control-Allow-Private-Network', 'true');
 
   const origin = req.header('origin');
-  if (origin && !allowedOrigins.includes(origin)) {
-    res.status(403).json({ error: 'Origin not allowed.', code: 'ORIGIN' });
+  const userscriptOrigin = origin === 'https://github.com' || origin === 'null';
+  if (origin && origin !== 'null' && !allowedOrigins.includes(origin)) {
+    res.status(403).json({ success: false, error: 'ORIGIN', message: 'Origin not allowed.' });
     return;
   }
 
-  if (origin === 'https://github.com' && req.method !== 'OPTIONS' && !githubUserscriptAllowed(req.method, req.path)) {
-    res.status(403).json({ error: 'This action is only available from the local dashboard.', code: 'ORIGIN' });
+  if (userscriptOrigin && req.method !== 'OPTIONS' && !githubUserscriptAllowed(req.method, req.path)) {
+    res.status(403).json({
+      success: false,
+      error: 'ORIGIN',
+      message: 'This action is only available from the local dashboard.',
+    });
     return;
   }
 

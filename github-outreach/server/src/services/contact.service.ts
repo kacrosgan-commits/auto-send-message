@@ -39,10 +39,79 @@ function emptyToNull(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+function optionalText(value: unknown, max: number): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, max);
+}
+
+function optionalHttpUrl(value: unknown): string | null {
+  const raw = optionalText(value, 2000);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeContactPayload(body: unknown): ContactInput {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw new AppError(400, 'Request body must be a JSON object.', 'VALIDATION', [
+      { path: 'body', message: 'Request body must be a JSON object.' },
+    ]);
+  }
+  const raw = body as Record<string, unknown>;
+  let username = typeof raw.username === 'string' ? raw.username.trim() : '';
+  const email = typeof raw.email === 'string' ? raw.email.trim() : '';
+  let githubUrl = typeof raw.githubUrl === 'string' ? raw.githubUrl.trim() : '';
+  const fromUrl = githubUrl.match(/github\.com\/([A-Za-z0-9-]{1,39})/i)?.[1] ?? '';
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(username) && fromUrl) username = fromUrl;
+  if (fromUrl) githubUrl = `https://github.com/${fromUrl}`;
+  else if (username) githubUrl = `https://github.com/${username}`;
+  const details: { path: string; message: string }[] = [];
+
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(username)) {
+    details.push({ path: 'username', message: 'Enter a valid GitHub username.' });
+  }
+  if (!email) {
+    details.push({ path: 'email', message: 'Email is required.' });
+  }
+  if (!/^https:\/\/github\.com\/[A-Za-z0-9-]+\/?$/.test(githubUrl)) {
+    details.push({ path: 'githubUrl', message: 'GitHub profile URL is required.' });
+  }
+  if (details.length) {
+    throw new AppError(
+      400,
+      details.map((issue) => `${issue.path}: ${issue.message}`).join('; '),
+      'VALIDATION',
+      details,
+    );
+  }
+
+  return {
+    username,
+    email,
+    githubUrl,
+    displayName: optionalText(raw.displayName, 200),
+    avatarUrl: optionalHttpUrl(raw.avatarUrl),
+    bio: optionalText(raw.bio, 4000),
+    location: optionalText(raw.location, 200),
+    company: optionalText(raw.company, 200),
+    searchKeyword: optionalText(raw.searchKeyword, 200),
+    source: 'github',
+  };
+}
+
 export async function saveContact(input: ContactInput) {
   const emailResult = validateEmail(input.email);
   if (!emailResult.ok) {
-    throw new AppError(400, emailResult.reason, 'INVALID_EMAIL');
+    throw new AppError(400, emailResult.reason, 'VALIDATION', [
+      { path: 'email', message: emailResult.reason },
+    ]);
   }
 
   const incoming = {
@@ -92,8 +161,8 @@ export async function saveContact(input: ContactInput) {
         searchKeyword: merged.searchKeyword,
       },
     });
-    logger.info({ username: contact.username, email: maskEmail(contact.email) }, '[Contact] Duplicate skipped');
-    return { contact, created: false, duplicate: true, message: 'Already in outreach' };
+    logger.info({ contactId: contact.id }, `[Contacts] Existing contact id=${contact.id}`);
+    return { success: true, contact, created: false, duplicate: true, message: 'Already in outreach' };
   }
 
   const contact = await prisma.contact.create({
@@ -110,8 +179,8 @@ export async function saveContact(input: ContactInput) {
       source: 'github',
     },
   });
-  logger.info({ username: contact.username, email: maskEmail(contact.email) }, '[Contact] Added');
-  return { contact, created: true, duplicate: false, message: 'Added to outreach' };
+  logger.info({ contactId: contact.id }, `[Contacts] Contact persisted id=${contact.id}`);
+  return { success: true, contact, created: true, duplicate: false, message: 'Added to outreach' };
 }
 
 export async function listContacts(filters: ContactFilters) {
