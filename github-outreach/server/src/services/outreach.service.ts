@@ -385,10 +385,10 @@ export async function sendPlacementTest(input: { templateId?: string; subject?: 
     throw new AppError(400, 'Connect Gmail before sending a placement test.', 'NOT_CONNECTED');
   }
   const limits = await getSendSettings();
-  const requested = input.to?.trim() || limits.testRecipient || credential.accountEmail?.trim() || '';
+  const requested = input.to?.trim() || limits.testRecipient || '';
   const checked = validateEmail(requested);
   if (!checked.ok) {
-    throw new AppError(400, 'Enter the email address that should receive the test.', 'INVALID_EMAIL');
+    throw new AppError(400, 'Enter the email address that should receive the test. Nothing was sent to the connected Gmail account.', 'INVALID_EMAIL');
   }
   const to = checked.email;
 
@@ -441,7 +441,7 @@ export async function sendPlacementTest(input: { templateId?: string; subject?: 
     sent: true,
     to,
     subject,
-    message: `Sent one copy to ${to}. Open Gmail and check Inbox and Spam. Show original on that message shows whether SPF, DKIM, and DMARC passed. This copy was not sent to anyone else.`,
+    message: `Sent one copy to ${to}. Check that inbox and its Spam folder. ${credential.accountEmail || 'The connected Gmail account'} only keeps a copy in Sent, and the To line on that copy is ${to}.`,
   };
 }
 

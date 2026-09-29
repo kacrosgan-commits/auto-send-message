@@ -4,6 +4,7 @@ import { sqliteDatabasePath } from './lib/prisma';
 import { logger } from './utils/logger';
 import { ensureDefaultTemplate } from './services/template.service';
 import { revertUnsentTestSends } from './services/outreach.service';
+import { ensureSendSettingsTable } from './services/settings.service';
 
 async function main(): Promise<void> {
   logger.info(`[Database] SQLite database: ${sqliteDatabasePath}`);
@@ -11,6 +12,7 @@ async function main(): Promise<void> {
   if (config.tokenEncryptionKey.includes('replace-with')) {
     logger.warn('TOKEN_ENCRYPTION_KEY is still the example value. Replace it before connecting Gmail.');
   }
+  await ensureSendSettingsTable();
   await ensureDefaultTemplate();
   const reverted = await revertUnsentTestSends();
   if (reverted > 0) {

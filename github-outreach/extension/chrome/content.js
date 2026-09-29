@@ -1418,9 +1418,13 @@
       return;
     }
     try {
-      await persistTiming();
+      try {
+        await persistTiming();
+      } catch {
+        // The address is sent with the test itself. A settings-table error must not block that one message.
+      }
       const result = await api('POST', '/api/outreach/placement-test', { templateId, to });
-      openModal('Test message', result.message || `Sent one test to ${to}.`);
+      openModal(result.sent === false ? 'Test not delivered' : 'Test message', result.message || `Sent one test to ${to}.`);
     } catch (error) {
       openModal('Test failed', error?.message || 'The test was not sent.');
     }

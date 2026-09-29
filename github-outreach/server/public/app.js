@@ -432,7 +432,8 @@ function outreachView() {
         id: 'test-recipient',
         type: 'email',
         placeholder: 'Test inbox',
-        value: state.auth?.testRecipient || '',
+        value: state.testRecipient ?? state.auth?.testRecipient ?? '',
+        oninput: (event) => { state.testRecipient = event.target.value; },
       }),
       state.view === 'sent' ? null : h('button', {
         class: 'btn',
@@ -442,7 +443,7 @@ function outreachView() {
     ]),
     h('p', { class: 'muted' }, state.view === 'sent'
       ? 'Sent messages stay in Gmail. This list only shows messages this app sent.'
-      : 'Approve & send all handles every draft and every approved message. Send test delivers one copy to the address in the box. Leave the box blank to use the connected Gmail.'),
+      : 'Approve & send all handles every draft and every approved message. Send test delivers one copy to the address in the box.'),
     state.outreach.length
       ? h('div', { class: 'table-wrap' }, [
           h('table', {}, [
@@ -499,7 +500,13 @@ function settingsView() {
       infoLine('Max attempts per email', auth ? String(auth.maxContactAttempts) : '—'),
       field('Max sends per day (1–500)', h('input', { id: 'max-sends', type: 'number', min: '1', max: '500', value: String(auth?.maxSendsPerDay ?? 20) })),
       field('Seconds between sends (0–3600)', h('input', { id: 'send-gap', type: 'number', min: '0', max: '3600', value: String(auth?.minSecondsBetweenSends ?? 60) })),
-      field('Test recipient', h('input', { id: 'test-recipient', type: 'email', placeholder: 'you@example.com', value: auth?.testRecipient || '' })),
+      field('Test recipient', h('input', {
+        id: 'test-recipient',
+        type: 'email',
+        placeholder: 'you@example.com',
+        value: state.testRecipient ?? auth?.testRecipient ?? '',
+        oninput: (event) => { state.testRecipient = event.target.value; },
+      })),
       h('div', { class: 'row-actions' }, [
         h('button', { class: 'btn', onclick: saveSendSettings }, 'Save timing'),
         h('button', { class: 'btn', disabled: state.busy, onclick: confirmPlacementTest }, 'Send test'),
@@ -802,17 +809,21 @@ function confirmPlacementTest() {
     render();
     return;
   }
-  const email = valueOf('#test-recipient') || state.auth?.testRecipient || state.auth?.email || 'the connected Gmail account';
+  const to = rememberTestRecipient();
+  if (!to) {
+    state.banner = { type: 'error', text: 'Enter the email address that should receive the test.' };
+    render();
+    return;
+  }
   state.modal = {
     type: 'confirm',
     title: 'Test inbox placement',
-    text: `Send one copy only to ${email}. Then check Inbox and Spam there. Nobody else receives this message.`,
-    confirmLabel: 'Send test to me',
+    text: `Send one copy only to ${to}. Then check Inbox and Spam there. Nobody else receives this message.`,
+    confirmLabel: 'Send test',
     onConfirm: async () => {
       state.busy = true;
       render();
       try {
-        const to = valueOf('#test-recipient');
         const payload = sample
           ? { subject: sample.subject, body: sample.body }
           : { templateId: state.templateId };
@@ -1109,6 +1120,12 @@ function field(label, control) {
 
 function valueOf(selector) {
   return document.querySelector(selector)?.value?.trim() || '';
+}
+
+function rememberTestRecipient() {
+  const field = document.querySelector('#test-recipient');
+  if (field) state.testRecipient = field.value;
+  return (state.testRecipient || '').trim();
 }
 
 function timeAgo(iso) {
