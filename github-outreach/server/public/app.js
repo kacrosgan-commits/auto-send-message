@@ -526,7 +526,7 @@ function settingsView() {
         h('button', { class: 'btn', onclick: saveSendSettings }, 'Save timing'),
         h('button', { class: 'btn', disabled: state.busy, onclick: confirmPlacementTest }, 'Send test'),
       ]),
-      h('p', { class: 'muted' }, 'A batch of 100 waits this many seconds between each message. 500 messages at 60 seconds take about 8 hours. The test is one message to the address above.'),
+      h('p', { class: 'muted' }, `Each message waits ${currentSendGap()} seconds after the previous one. The test is one message to the address above.`),
     ]),
   ]);
 }
@@ -730,7 +730,17 @@ function confirmApproveAndSendAll() {
     render();
     return;
   }
-  const gap = state.auth?.testMode ? 0 : (state.summary?.minSecondsBetweenSends ?? 60);
+  void openApproveAndSendAll(drafted, approved, total);
+}
+
+async function openApproveAndSendAll(drafted, approved, total) {
+  try {
+    const settings = await api('/api/settings');
+    applySavedTiming(settings);
+  } catch {
+    // The dialog still uses the timing already loaded.
+  }
+  const gap = state.auth?.testMode ? 0 : currentSendGap();
   const minutes = Math.max(1, Math.ceil(((Math.max(total, 1) - 1) * gap) / 60));
   const timing = gap === 0
     ? 'Messages go out one after another.'
@@ -812,18 +822,10 @@ async function saveSendSettings() {
       method: 'PATCH',
       body: JSON.stringify({ maxSendsPerDay, minSecondsBetweenSends, testRecipient }),
     });
-    if (state.auth) {
-      state.auth.maxSendsPerDay = saved.maxSendsPerDay;
-      state.auth.minSecondsBetweenSends = saved.minSecondsBetweenSends;
-      state.auth.testRecipient = saved.testRecipient;
-    }
+    applySavedTiming(saved);
     state.timingDraft['max-sends'] = String(saved.maxSendsPerDay);
     state.timingDraft['send-gap'] = String(saved.minSecondsBetweenSends);
     state.testRecipient = saved.testRecipient;
-    if (state.summary) {
-      state.summary.maxSendsPerDay = saved.maxSendsPerDay;
-      state.summary.minSecondsBetweenSends = saved.minSecondsBetweenSends;
-    }
     state.banner = { type: 'ok', text: `Send timing saved. ${saved.minSecondsBetweenSends}s between messages, up to ${saved.maxSendsPerDay} a day.` };
     render();
   } catch (error) {
@@ -1150,6 +1152,27 @@ function field(label, control) {
 
 function valueOf(selector) {
   return document.querySelector(selector)?.value?.trim() || '';
+}
+
+function applySavedTiming(saved) {
+  if (!saved) return;
+  if (state.auth) {
+    state.auth.maxSendsPerDay = saved.maxSendsPerDay;
+    state.auth.minSecondsBetweenSends = saved.minSecondsBetweenSends;
+    if (saved.testRecipient != null) state.auth.testRecipient = saved.testRecipient;
+  }
+  if (state.summary) {
+    state.summary.maxSendsPerDay = saved.maxSendsPerDay;
+    state.summary.minSecondsBetweenSends = saved.minSecondsBetweenSends;
+  }
+}
+
+function currentSendGap() {
+  const saved = Number(state.auth?.minSecondsBetweenSends);
+  if (Number.isFinite(saved)) return saved;
+  const summaryGap = Number(state.summary?.minSecondsBetweenSends);
+  if (Number.isFinite(summaryGap)) return summaryGap;
+  return 60;
 }
 
 function timingValue(id, fallback) {

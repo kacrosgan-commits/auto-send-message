@@ -72,11 +72,18 @@ function fallbackSettings(): SendSettingsView {
   };
 }
 
+let rememberedSettings: SendSettingsView | null = null;
+
+function remember(settings: SendSettingsView): SendSettingsView {
+  rememberedSettings = settings;
+  return settings;
+}
+
 export async function getSendSettings(): Promise<SendSettingsView> {
   try {
     await ensureSendSettingsTable();
     const existing = await prisma.sendSettings.findUnique({ where: { id: 1 } });
-    if (existing) return toView(existing);
+    if (existing) return remember(toView(existing));
     const created = await prisma.sendSettings.create({
       data: {
         id: 1,
@@ -85,9 +92,21 @@ export async function getSendSettings(): Promise<SendSettingsView> {
         testRecipient: '',
       },
     });
-    return toView(created);
+    return remember(toView(created));
   } catch (error) {
-    logger.warn({ message: error instanceof Error ? error.message : 'settings unavailable' }, '[Settings] Using .env limits');
+    const message = error instanceof Error ? error.message : 'settings unavailable';
+    logger.warn({ message }, '[Settings] Prisma read failed, reading SQLite directly');
+    try {
+      const direct = await readSendSettingsDirect();
+      if (direct) return remember(direct);
+    } catch (directError) {
+      logger.warn(
+        { message: directError instanceof Error ? directError.message : 'direct read failed' },
+        '[Settings] Direct settings read failed',
+      );
+    }
+    if (rememberedSettings) return rememberedSettings;
+    logger.warn('[Settings] Using .env limits');
     return fallbackSettings();
   }
 }
@@ -117,7 +136,7 @@ export async function updateSendSettings(input: {
   };
   try {
     const updated = await writeSendSettings(data);
-    return toView(updated);
+    return remember(toView(updated));
   } catch (error) {
     const detail = error instanceof Error ? error.message : 'settings update failed';
     logger.error({ message: detail }, '[Settings] Update failed');
@@ -149,6 +168,49 @@ async function writeSendSettings(data: {
     await writeSendSettingsDirect(data);
     return data;
   }
+}
+
+function readSendSettingsDirect(): Promise<SendSettingsView | null> {
+  const script = `
+import json, sqlite3, sys
+payload = json.loads(sys.stdin.read())
+con = sqlite3.connect(payload["db"], timeout=8)
+con.execute("PRAGMA busy_timeout=8000")
+row = con.execute(
+    "SELECT maxSendsPerDay, minSecondsBetweenSends, testRecipient FROM SendSettings WHERE id = 1"
+).fetchone()
+if row is None:
+    sys.exit(2)
+print(json.dumps({
+    "maxSendsPerDay": row[0],
+    "minSecondsBetweenSends": row[1],
+    "testRecipient": row[2] or "",
+}))
+`;
+  return new Promise((resolve, reject) => {
+    const child = spawn('python3', ['-c', script], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 2) {
+        resolve(null);
+        return;
+      }
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `Settings read exited ${code}`));
+        return;
+      }
+      resolve(JSON.parse(stdout) as SendSettingsView);
+    });
+    child.stdin.end(JSON.stringify({ db: sqliteDatabasePath }));
+  });
 }
 
 function writeSendSettingsDirect(data: {
