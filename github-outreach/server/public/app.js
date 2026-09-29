@@ -660,11 +660,22 @@ async function openPreview(contactIds) {
   }
   if (!contactIds.length) return;
   try {
-    const data = await api('/api/templates/preview', {
-      method: 'POST',
-      body: JSON.stringify({ templateId: state.templateId, contactIds }),
-    });
-    state.modal = { type: 'preview', previews: data.previews, progress: '' };
+    const previews = [];
+    for (let index = 0; index < contactIds.length; index += 100) {
+      const chunk = contactIds.slice(index, index + 100);
+      state.banner = {
+        type: 'ok',
+        text: `Preparing ${Math.min(index + chunk.length, contactIds.length)} / ${contactIds.length}`,
+      };
+      render();
+      const data = await api('/api/templates/preview', {
+        method: 'POST',
+        body: JSON.stringify({ templateId: state.templateId, contactIds: chunk }),
+      });
+      previews.push(...(data.previews || []));
+    }
+    state.banner = null;
+    state.modal = { type: 'preview', previews, progress: '' };
     render();
   } catch (error) {
     state.banner = { type: 'error', text: error.message };

@@ -176,12 +176,18 @@ export async function sendOutreach(outreachId: string) {
         'TEST_MODE',
       );
     }
-    if (!outreach.gmailDraftId || outreach.gmailDraftId.startsWith('test-draft:')) {
-      throw new AppError(400, 'This message has no Gmail draft to send. Create the draft again.', 'DRAFT_MISSING');
+    const recipient = validateEmail(outreach.contact.email);
+    if (!recipient.ok) throw new AppError(400, recipient.reason, 'INVALID_EMAIL');
+    if (!outreach.subject.trim() || !outreach.body.trim()) {
+      throw new AppError(400, 'This message has no subject or body to send.', 'TEMPLATE');
     }
 
     try {
-      const gmailMessageId = await sendGmailDraft(outreach.gmailDraftId);
+      const gmailMessageId = await deliverOutreach(outreach.gmailDraftId, {
+        to: recipient.email,
+        subject: outreach.subject,
+        body: outreach.body,
+      });
       const sentAt = new Date();
       const updated = await prisma.outreach.update({
         where: { id: outreachId },
@@ -218,6 +224,21 @@ export async function sendOutreach(outreachId: string) {
       throw new AppError(502, message, 'SEND_FAILED');
     }
   });
+}
+
+async function deliverOutreach(
+  draftId: string | null,
+  message: { to: string; subject: string; body: string },
+): Promise<string> {
+  const realDraft = Boolean(draftId && !draftId.startsWith('test-draft:'));
+  if (!realDraft) return sendPlainEmail(message);
+  try {
+    return await sendGmailDraft(draftId as string);
+  } catch (error) {
+    if (!(error instanceof AppError) || error.code !== 'DRAFT_MISSING') throw error;
+    logger.warn('[Gmail] Stored draft is gone. Sending the saved message instead.');
+    return sendPlainEmail(message);
+  }
 }
 
 const SKIP_SEND_CODES = new Set([
@@ -443,6 +464,36 @@ export async function sendPlacementTest(input: { templateId?: string; subject?: 
     subject,
     message: `Sent one copy to ${to}. Check that inbox and its Spam folder. ${credential.accountEmail || 'The connected Gmail account'} only keeps a copy in Sent, and the To line on that copy is ${to}.`,
   };
+}
+
+export async function reopenDraftlessFailures(): Promise<number> {
+  const rows = await prisma.outreach.findMany({
+    where: {
+      status: 'FAILED',
+      OR: [
+        { failureReason: { contains: 'no Gmail draft' } },
+        { failureReason: { contains: 'draft no longer exists' } },
+        { failureReason: { contains: 'Create the draft again' } },
+        { failureReason: { contains: 'Create a new draft' } },
+        { failureReason: { contains: 'kept this message as a draft' } },
+      ],
+    },
+    select: { id: true, contactId: true },
+  });
+  for (const row of rows) {
+    await prisma.outreach.update({
+      where: { id: row.id },
+      data: { status: 'APPROVED', failureReason: null, approvedAt: new Date() },
+    });
+    const contact = await prisma.contact.findUnique({ where: { id: row.contactId } });
+    if (contact?.status === 'FAILED') {
+      await prisma.contact.update({
+        where: { id: row.contactId },
+        data: { status: 'APPROVED' },
+      });
+    }
+  }
+  return rows.length;
 }
 
 export async function revertUnsentTestSends(): Promise<number> {

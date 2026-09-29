@@ -33,7 +33,7 @@ outreachRouter.post(
   '/bulk-draft',
   validate({
     body: z.object({
-      contactIds: z.array(z.string().min(1).max(64)).min(1).max(50),
+      contactIds: z.array(z.string().min(1).max(64)).min(1).max(500),
       templateId: z.string().min(1).max(64),
     }),
   }),
@@ -58,7 +58,7 @@ outreachRouter.post(
   '/bulk-send',
   validate({
     body: z.object({
-      outreachIds: z.array(z.string().min(1).max(64)).min(1).max(50),
+      outreachIds: z.array(z.string().min(1).max(64)).min(1).max(500),
     }),
   }),
   asyncRoute(async (req, res) => {

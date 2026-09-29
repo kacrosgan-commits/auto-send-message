@@ -3,7 +3,7 @@ import { config } from './config';
 import { configureSqlite, sqliteDatabasePath } from './lib/prisma';
 import { logger } from './utils/logger';
 import { ensureDefaultTemplate } from './services/template.service';
-import { revertUnsentTestSends } from './services/outreach.service';
+import { reopenDraftlessFailures, revertUnsentTestSends } from './services/outreach.service';
 import { ensureSendSettingsTable } from './services/settings.service';
 
 async function main(): Promise<void> {
@@ -15,6 +15,10 @@ async function main(): Promise<void> {
   await configureSqlite();
   await ensureSendSettingsTable();
   await ensureDefaultTemplate();
+  const reopened = await reopenDraftlessFailures();
+  if (reopened > 0) {
+    logger.warn(`[Outreach] Moved ${reopened} failed messages back to approved so they can be sent.`);
+  }
   const reverted = await revertUnsentTestSends();
   if (reverted > 0) {
     logger.warn(`[Outreach] Moved ${reverted} messages back to approved. They were marked sent, but Gmail never sent them.`);

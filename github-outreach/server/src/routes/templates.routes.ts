@@ -41,7 +41,7 @@ templatesRouter.post(
       templateId: z.string().min(1).max(64).optional(),
       subject: z.string().max(200).optional(),
       body: z.string().max(20000).optional(),
-      contactIds: z.array(z.string().min(1).max(64)).min(1).max(50),
+      contactIds: z.array(z.string().min(1).max(64)).min(1).max(500),
     }),
   }),
   asyncRoute(async (req, res) => {

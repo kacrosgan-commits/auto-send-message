@@ -73,11 +73,11 @@ export async function previewTemplate(input: {
   }
 
   const contacts = await prisma.contact.findMany({
-    where: { id: { in: input.contactIds.slice(0, 50) } },
+    where: { id: { in: input.contactIds } },
   });
   const byId = new Map(contacts.map((contact) => [contact.id, contact]));
 
-  return input.contactIds.slice(0, 50).map((contactId) => {
+  return input.contactIds.map((contactId) => {
     const contact = byId.get(contactId);
     if (!contact) {
       return {
