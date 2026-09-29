@@ -105,6 +105,8 @@ a:hover { text-decoration: underline; }
   align-items: center;
 }
 
+.toolbar h2 { margin: 0; margin-right: auto; font-size: 18px; }
+
 .filters { margin-bottom: 12px; }
 .filters input, .filters select, .field input, .field select, .field textarea, .editor input, .editor textarea, .editor select {
   background: var(--bg);

@@ -62,3 +62,22 @@ export async function sendGmailDraft(draftId: string): Promise<string> {
     throw mapGmailError(error, 'Send failed. The message was not confirmed as sent.');
   }
 }
+
+export async function sendPlainEmail(input: { to: string; subject: string; body: string }): Promise<string> {
+  const auth = await getAuthorizedClient();
+  const gmail = google.gmail({ version: 'v1', auth });
+  const raw = buildEncodedMime(input);
+  try {
+    const response = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: { raw },
+    });
+    const id = response.data.id;
+    if (!id) {
+      throw new AppError(502, 'Send failed. Gmail did not confirm the message.', 'SEND_FAILED');
+    }
+    return id;
+  } catch (error) {
+    throw mapGmailError(error, 'Send failed. The message was not confirmed as sent.');
+  }
+}

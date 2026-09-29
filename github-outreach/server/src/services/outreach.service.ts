@@ -1,7 +1,7 @@
 import type { OutreachStatus } from '@prisma/client';
 import { config } from '../config';
 import { prisma } from '../lib/prisma';
-import { createGmailDraft, sendGmailDraft } from './gmail.service';
+import { createGmailDraft, sendGmailDraft, sendPlainEmail } from './gmail.service';
 import { AppError } from '../utils/errors';
 import { maskEmail, validateEmail } from '../utils/email';
 import { logger } from '../utils/logger';
@@ -368,5 +368,65 @@ export async function sendOutreachBulk(outreachIds: string[]) {
     sent,
     failed,
     skipped,
+  };
+}
+
+export async function sendPlacementTest(input: { templateId?: string; subject?: string; body?: string }) {
+  const credential = await prisma.googleCredential.findFirst({ orderBy: { updatedAt: 'desc' } });
+  const to = credential?.accountEmail?.trim();
+  if (!to) {
+    throw new AppError(400, 'Connect Gmail before sending a placement test.', 'NOT_CONNECTED');
+  }
+
+  let subject = input.subject?.trim() ?? '';
+  let body = input.body?.trim() ?? '';
+  if (!subject || !body) {
+    if (!input.templateId) {
+      throw new AppError(400, 'Choose a template before sending a placement test.', 'TEMPLATE');
+    }
+    const template = await getTemplate(input.templateId);
+    const context = {
+      name: 'Alex Rivera',
+      first_name: 'Alex',
+      username: 'alexrivera',
+      email: to,
+      github_url: 'https://github.com/alexrivera',
+      bio: 'Builds developer tools',
+      company: 'Example Studio',
+      location: 'Remote',
+      search_keyword: 'typescript',
+    };
+    const renderedSubject = interpolate(template.subject, context);
+    const renderedBody = interpolate(template.body, context);
+    if (
+      renderedSubject.missing.length
+      || renderedBody.missing.length
+      || hasUnresolved(renderedSubject.text)
+      || hasUnresolved(renderedBody.text)
+    ) {
+      throw new AppError(400, 'The template still has missing values, so the test was not sent.', 'TEMPLATE');
+    }
+    subject = renderedSubject.text;
+    body = renderedBody.text;
+  }
+
+  if (config.outreachTestMode) {
+    return {
+      testMode: true,
+      sent: false,
+      to,
+      subject,
+      message: `Test mode is on, so nothing was delivered. Set OUTREACH_TEST_MODE=false in server/.env, restart, and send the test again to ${to}.`,
+    };
+  }
+
+  await sendPlainEmail({ to, subject, body });
+  logger.info({ email: maskEmail(to) }, '[Gmail] Placement test sent to the connected account');
+  return {
+    testMode: false,
+    sent: true,
+    to,
+    subject,
+    message: `Sent one copy to ${to}. Open Gmail and check Inbox and Spam. Show original on that message shows whether SPF, DKIM, and DMARC passed. This copy was not sent to anyone else.`,
   };
 }

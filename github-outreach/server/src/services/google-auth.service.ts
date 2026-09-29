@@ -186,5 +186,6 @@ export async function authStatus() {
     maxSendsPerDay: config.maxSendsPerDay,
     minSecondsBetweenSends: config.minSecondsBetweenSends,
     maxContactAttempts: config.maxContactAttempts,
+    testMode: config.outreachTestMode,
   };
 }

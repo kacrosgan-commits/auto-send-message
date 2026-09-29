@@ -10,6 +10,7 @@ import {
   listOutreach,
   sendOutreach,
   sendOutreachBulk,
+  sendPlacementTest,
 } from '../services/outreach.service';
 import { OUTREACH_STATUSES } from '../types';
 
@@ -62,6 +63,22 @@ outreachRouter.post(
   }),
   asyncRoute(async (req, res) => {
     res.json(await sendOutreachBulk(req.body.outreachIds));
+  }),
+);
+
+outreachRouter.post(
+  '/placement-test',
+  validate({
+    body: z.object({
+      templateId: z.string().min(1).max(64).optional(),
+      subject: z.string().trim().min(1).max(200).optional(),
+      body: z.string().trim().min(1).max(20000).optional(),
+    }).refine((value) => Boolean(value.templateId || (value.subject && value.body)), {
+      message: 'Choose a template or a message to test.',
+    }),
+  }),
+  asyncRoute(async (req, res) => {
+    res.json(await sendPlacementTest(req.body));
   }),
 );
 

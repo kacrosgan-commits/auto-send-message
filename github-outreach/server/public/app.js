@@ -414,11 +414,24 @@ function templatesView() {
 
 function outreachView() {
   const title = state.view === 'drafts' ? 'Drafts' : state.view === 'approved' ? 'Approved' : 'Sent';
+  const waiting = (state.summary?.drafted ?? 0) + (state.summary?.approved ?? 0);
   return h('section', { class: 'card' }, [
-    h('h2', {}, title),
+    h('div', { class: 'toolbar' }, [
+      h('h2', {}, title),
+      state.view === 'sent' ? null : h('button', {
+        class: 'btn-primary',
+        disabled: state.busy || waiting === 0,
+        onclick: confirmApproveAndSendAll,
+      }, waiting ? `Approve & send all (${waiting})` : 'Approve & send all'),
+      state.view === 'sent' ? null : h('button', {
+        class: 'btn',
+        disabled: state.busy || (!state.outreach.length && !state.templateId),
+        onclick: confirmPlacementTest,
+      }, 'Send test to me'),
+    ]),
     h('p', { class: 'muted' }, state.view === 'sent'
       ? 'Sent messages stay in Gmail. This list only shows messages this app sent.'
-      : 'Nothing here is sent until you approve it and then click Send.'),
+      : 'Approve & send all handles every draft and every approved message. Send test to me delivers one copy only to your connected Gmail so you can check Inbox or Spam.'),
     state.outreach.length
       ? h('div', { class: 'table-wrap' }, [
           h('table', {}, [
@@ -474,7 +487,7 @@ function settingsView() {
       infoLine('Sends today', auth ? `${auth.sendsToday} / ${auth.maxSendsPerDay}` : '—'),
       infoLine('Minimum seconds between sends', auth ? String(auth.minSecondsBetweenSends) : '—'),
       infoLine('Max attempts per email', auth ? String(auth.maxContactAttempts) : '—'),
-      h('p', { class: 'muted' }, 'Every send still needs its own approval. There is no send-all action.'),
+      h('p', { class: 'muted' }, 'Approve & send all on Drafts or Approved sends the whole list, spaced by the cooldown above. Send test to me goes only to your connected Gmail.'),
     ]),
   ]);
 }
@@ -484,6 +497,7 @@ function modal() {
   if (state.modal.type === 'preview') return previewModal();
   if (state.modal.type === 'template') return templateModal();
   if (state.modal.type === 'confirm') return confirmModal();
+  if (state.modal.type === 'progress') return progressModal();
   return null;
 }
 
@@ -550,6 +564,13 @@ function templateModal() {
       h('button', { class: 'btn', onclick: () => { state.modal = null; render(); } }, 'Back'),
       h('button', { class: 'btn-primary', onclick: saveTemplate }, 'Save'),
     ]),
+  ]);
+}
+
+function progressModal() {
+  return overlay([
+    h('h2', {}, state.modal.title),
+    h('p', {}, state.modal.text),
   ]);
 }
 
@@ -648,6 +669,158 @@ async function createDrafts(previews) {
     ? { type: 'error', text: `Created ${messages.length - failures.length} of ${messages.length} drafts. ${failures[0]} Nothing was sent.` }
     : { type: 'ok', text: messages.length === 1 ? 'Gmail draft created. Nothing was sent.' : `Created ${messages.length} Gmail drafts. Nothing was sent.` };
   await refreshAll();
+}
+
+function confirmApproveAndSendAll() {
+  const drafted = state.summary?.drafted ?? 0;
+  const approved = state.summary?.approved ?? 0;
+  const total = drafted + approved;
+  if (!total) {
+    state.banner = { type: 'error', text: 'There are no drafts or approved messages to send.' };
+    render();
+    return;
+  }
+  const gap = state.auth?.testMode ? 0 : (state.summary?.minSecondsBetweenSends ?? 60);
+  const minutes = Math.max(1, Math.ceil(((Math.max(total, 1) - 1) * gap) / 60));
+  const timing = gap === 0
+    ? 'Messages go out one after another.'
+    : `Messages go out one after another, ${gap} seconds apart, so ${total} messages take about ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+  const testNote = state.auth?.testMode
+    ? ' Test mode is on, so Gmail will not deliver anything.'
+    : '';
+  state.modal = {
+    type: 'confirm',
+    title: 'Approve and send all',
+    text: `Approve ${drafted} draft${drafted === 1 ? '' : 's'} and send ${total} message${total === 1 ? '' : 's'} from your Gmail account. ${timing}${testNote}`,
+    confirmLabel: 'Approve & send all',
+    onConfirm: () => { void runApproveAndSendAll(); },
+  };
+  render();
+}
+
+async function runApproveAndSendAll() {
+  state.busy = true;
+  showProgress('Approve and send all', 'Loading messages…');
+  const sent = [];
+  const failed = [];
+  const skipped = [];
+  try {
+    const [drafted, approved] = await Promise.all([
+      api('/api/outreach?status=DRAFTED'),
+      api('/api/outreach?status=APPROVED'),
+    ]);
+    const draftIds = (drafted.outreach || []).map((row) => row.id);
+    const toSend = (approved.outreach || []).map((row) => row.id);
+    for (let index = 0; index < draftIds.length; index += 50) {
+      const chunk = draftIds.slice(index, index + 50);
+      showProgress('Approve and send all', `Approving ${Math.min(index + chunk.length, draftIds.length)} of ${draftIds.length}…`);
+      const result = await api('/api/outreach/bulk-approve', {
+        method: 'POST',
+        body: JSON.stringify({ outreachIds: chunk }),
+      });
+      (result.outreach || []).forEach((row) => toSend.push(row.id));
+      (result.skippedItems || []).forEach((row) => skipped.push(row.reason || 'Skipped'));
+    }
+    let stopped = false;
+    for (let index = 0; index < toSend.length; index += 1) {
+      if (stopped) {
+        skipped.push('Daily send limit');
+        continue;
+      }
+      showProgress('Approve and send all', `Sending ${index + 1} of ${toSend.length}…`);
+      const outcome = await sendOneWithCooldown(toSend[index], (text) => {
+        showProgress('Approve and send all', `Sending ${index + 1} of ${toSend.length}. ${text}`);
+      });
+      if (outcome.status === 'sent') sent.push(toSend[index]);
+      else if (outcome.status === 'limit') {
+        stopped = true;
+        skipped.push(outcome.message);
+      } else if (outcome.status === 'skipped') skipped.push(outcome.message);
+      else failed.push(outcome.message);
+    }
+    const testNote = state.auth?.testMode ? ' Test mode: no email was delivered.' : '';
+    state.banner = {
+      type: failed.length ? 'error' : 'ok',
+      text: `Sent ${sent.length}. Failed ${failed.length}. Skipped ${skipped.length}.${testNote}`,
+    };
+  } catch (error) {
+    state.banner = { type: 'error', text: error.message };
+  } finally {
+    state.busy = false;
+    state.modal = null;
+    await refreshAll();
+  }
+}
+
+function confirmPlacementTest() {
+  const sample = state.outreach[0];
+  if (!sample && !state.templateId) {
+    state.banner = { type: 'error', text: 'Create a template or a draft before sending a placement test.' };
+    render();
+    return;
+  }
+  const email = state.auth?.email || 'your connected Gmail';
+  state.modal = {
+    type: 'confirm',
+    title: 'Test inbox placement',
+    text: `Send one copy only to ${email}. Then check Inbox and Spam in that account. Nobody else receives this message.`,
+    confirmLabel: 'Send test to me',
+    onConfirm: async () => {
+      state.busy = true;
+      render();
+      try {
+        const payload = sample
+          ? { subject: sample.subject, body: sample.body }
+          : { templateId: state.templateId };
+        const result = await api('/api/outreach/placement-test', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        state.modal = null;
+        state.banner = { type: result.sent ? 'ok' : 'error', text: result.message };
+      } catch (error) {
+        state.banner = { type: 'error', text: error.message };
+        state.modal = null;
+      } finally {
+        state.busy = false;
+        render();
+      }
+    },
+  };
+  render();
+}
+
+function showProgress(title, text) {
+  state.modal = { type: 'progress', title, text };
+  render();
+}
+
+async function sendOneWithCooldown(id, onWait) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await api(`/api/outreach/${id}/send`, { method: 'POST', body: '{}' });
+      return { status: 'sent' };
+    } catch (error) {
+      const message = error.message || 'Send failed.';
+      const wait = /Wait (\d+)s/.exec(message);
+      if (wait && attempt < 2) {
+        const seconds = Number(wait[1]);
+        onWait(`Waiting ${seconds}s before the next send…`);
+        await delay((seconds + 1) * 1000);
+        continue;
+      }
+      if (/Daily send limit/i.test(message)) return { status: 'limit', message };
+      if (/already been sent|do-not-contact|opted out|Only approved|valid public email|maximum number/i.test(message)) {
+        return { status: 'skipped', message };
+      }
+      return { status: 'failed', message };
+    }
+  }
+  return { status: 'failed', message: 'Send failed.' };
+}
+
+function delay(ms) {
+  return new Promise((resolve) => { window.setTimeout(resolve, ms); });
 }
 
 async function approve(id) {
