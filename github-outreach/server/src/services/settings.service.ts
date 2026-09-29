@@ -109,26 +109,49 @@ export async function updateSendSettings(input: {
       testRecipient = '';
     }
   }
+  const data = {
+    maxSendsPerDay: input.maxSendsPerDay ?? current.maxSendsPerDay,
+    minSecondsBetweenSends: input.minSecondsBetweenSends ?? current.minSecondsBetweenSends,
+    testRecipient,
+  };
   try {
-    const updated = await prisma.sendSettings.upsert({
-      where: { id: 1 },
-      create: {
-        id: 1,
-        maxSendsPerDay: input.maxSendsPerDay ?? current.maxSendsPerDay,
-        minSecondsBetweenSends: input.minSecondsBetweenSends ?? current.minSecondsBetweenSends,
-        testRecipient,
-      },
-      update: {
-        maxSendsPerDay: input.maxSendsPerDay ?? current.maxSendsPerDay,
-        minSecondsBetweenSends: input.minSecondsBetweenSends ?? current.minSecondsBetweenSends,
-        testRecipient,
-      },
-    });
+    const updated = await writeSendSettings(data);
     return toView(updated);
   } catch (error) {
-    logger.error({ message: error instanceof Error ? error.message : 'settings update failed' }, '[Settings] Update failed');
-    throw new AppError(500, `Send settings could not be saved. ${MIGRATE_HINT}`, 'DATABASE');
+    const detail = error instanceof Error ? error.message : 'settings update failed';
+    logger.error({ message: detail }, '[Settings] Update failed');
+    const missingTable = /no such table|does not exist/i.test(detail);
+    throw new AppError(
+      500,
+      missingTable
+        ? `Send settings could not be saved. ${MIGRATE_HINT}`
+        : 'Send timing could not be saved. Wait a moment and click Save timing again.',
+      'DATABASE',
+    );
   }
+}
+
+async function writeSendSettings(data: {
+  maxSendsPerDay: number;
+  minSecondsBetweenSends: number;
+  testRecipient: string;
+}) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await prisma.sendSettings.upsert({
+        where: { id: 1 },
+        create: { id: 1, ...data },
+        update: data,
+      });
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : '';
+      if (!/busy|locked/i.test(message) || attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 
 function toView(row: { maxSendsPerDay: number; minSecondsBetweenSends: number; testRecipient: string }): SendSettingsView {

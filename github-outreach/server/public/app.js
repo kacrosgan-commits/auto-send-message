@@ -26,6 +26,7 @@ const state = {
   modal: null,
   busy: false,
   refreshLabel: '',
+  timingDraft: {},
 };
 
 const VIEWS = [
@@ -498,8 +499,22 @@ function settingsView() {
       h('h2', {}, 'Send timing'),
       infoLine('Sends today', auth ? `${auth.sendsToday} / ${auth.maxSendsPerDay}` : '—'),
       infoLine('Max attempts per email', auth ? String(auth.maxContactAttempts) : '—'),
-      field('Max sends per day (1–500)', h('input', { id: 'max-sends', type: 'number', min: '1', max: '500', value: String(auth?.maxSendsPerDay ?? 20) })),
-      field('Seconds between sends (0–3600)', h('input', { id: 'send-gap', type: 'number', min: '0', max: '3600', value: String(auth?.minSecondsBetweenSends ?? 60) })),
+      field('Max sends per day (1–500)', h('input', {
+        id: 'max-sends',
+        type: 'number',
+        min: '1',
+        max: '500',
+        value: timingValue('max-sends', String(auth?.maxSendsPerDay ?? 20)),
+        oninput: (event) => { state.timingDraft['max-sends'] = event.target.value; },
+      })),
+      field('Seconds between sends (0–3600)', h('input', {
+        id: 'send-gap',
+        type: 'number',
+        min: '0',
+        max: '3600',
+        value: timingValue('send-gap', String(auth?.minSecondsBetweenSends ?? 60)),
+        oninput: (event) => { state.timingDraft['send-gap'] = event.target.value; },
+      })),
       field('Test recipient', h('input', {
         id: 'test-recipient',
         type: 'email',
@@ -777,9 +792,10 @@ async function runApproveAndSendAll() {
 }
 
 async function saveSendSettings() {
-  const maxSendsPerDay = Number(valueOf('#max-sends'));
-  const minSecondsBetweenSends = Number(valueOf('#send-gap'));
-  const testRecipient = valueOf('#test-recipient');
+  rememberTimingFromDom();
+  const maxSendsPerDay = Number(state.timingDraft['max-sends']);
+  const minSecondsBetweenSends = Number(state.timingDraft['send-gap']);
+  const testRecipient = (state.testRecipient || '').trim();
   try {
     const saved = await api('/api/settings', {
       method: 'PATCH',
@@ -790,6 +806,9 @@ async function saveSendSettings() {
       state.auth.minSecondsBetweenSends = saved.minSecondsBetweenSends;
       state.auth.testRecipient = saved.testRecipient;
     }
+    state.timingDraft['max-sends'] = String(saved.maxSendsPerDay);
+    state.timingDraft['send-gap'] = String(saved.minSecondsBetweenSends);
+    state.testRecipient = saved.testRecipient;
     if (state.summary) {
       state.summary.maxSendsPerDay = saved.maxSendsPerDay;
       state.summary.minSecondsBetweenSends = saved.minSecondsBetweenSends;
@@ -1122,9 +1141,21 @@ function valueOf(selector) {
   return document.querySelector(selector)?.value?.trim() || '';
 }
 
-function rememberTestRecipient() {
+function timingValue(id, fallback) {
+  return state.timingDraft[id] ?? fallback;
+}
+
+function rememberTimingFromDom() {
+  const max = document.querySelector('#max-sends');
+  const gap = document.querySelector('#send-gap');
+  if (max) state.timingDraft['max-sends'] = max.value;
+  if (gap) state.timingDraft['send-gap'] = gap.value;
   const field = document.querySelector('#test-recipient');
   if (field) state.testRecipient = field.value;
+}
+
+function rememberTestRecipient() {
+  rememberTimingFromDom();
   return (state.testRecipient || '').trim();
 }
 
