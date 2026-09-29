@@ -1,8 +1,9 @@
+import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config';
-import { prisma } from '../lib/prisma';
+import { prisma, sqliteDatabasePath } from '../lib/prisma';
 import { AppError } from '../utils/errors';
 import { validateEmail } from '../utils/email';
 import { logger } from '../utils/logger';
@@ -136,22 +137,69 @@ async function writeSendSettings(data: {
   minSecondsBetweenSends: number;
   testRecipient: string;
 }) {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      return await prisma.sendSettings.upsert({
-        where: { id: 1 },
-        create: { id: 1, ...data },
-        update: data,
-      });
-    } catch (error) {
-      lastError = error;
-      const message = error instanceof Error ? error.message : '';
-      if (!/busy|locked/i.test(message) || attempt === 2) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
-    }
+  try {
+    return await prisma.sendSettings.upsert({
+      where: { id: 1 },
+      create: { id: 1, ...data },
+      update: data,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    logger.warn({ message }, '[Settings] Prisma write failed, writing SQLite directly');
+    await writeSendSettingsDirect(data);
+    return data;
   }
-  throw lastError;
+}
+
+function writeSendSettingsDirect(data: {
+  maxSendsPerDay: number;
+  minSecondsBetweenSends: number;
+  testRecipient: string;
+}): Promise<void> {
+  const script = `
+import json, sqlite3, sys, time
+payload = json.loads(sys.stdin.read())
+con = sqlite3.connect(payload["db"], timeout=8)
+con.execute("PRAGMA busy_timeout=8000")
+con.execute("PRAGMA journal_mode=WAL")
+con.execute("""
+CREATE TABLE IF NOT EXISTS SendSettings (
+  id INTEGER NOT NULL PRIMARY KEY,
+  maxSendsPerDay INTEGER NOT NULL,
+  minSecondsBetweenSends INTEGER NOT NULL,
+  testRecipient TEXT NOT NULL DEFAULT '',
+  updatedAt DATETIME NOT NULL
+)
+""")
+con.execute("""
+INSERT INTO SendSettings (id, maxSendsPerDay, minSecondsBetweenSends, testRecipient, updatedAt)
+VALUES (1, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  maxSendsPerDay = excluded.maxSendsPerDay,
+  minSecondsBetweenSends = excluded.minSecondsBetweenSends,
+  testRecipient = excluded.testRecipient,
+  updatedAt = excluded.updatedAt
+""", (
+  payload["maxSendsPerDay"],
+  payload["minSecondsBetweenSends"],
+  payload["testRecipient"],
+  int(time.time() * 1000),
+))
+con.commit()
+`;
+  return new Promise((resolve, reject) => {
+    const child = spawn('python3', ['-c', script], { stdio: ['pipe', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `Settings write exited ${code}`));
+    });
+    child.stdin.end(JSON.stringify({ db: sqliteDatabasePath, ...data }));
+  });
 }
 
 function toView(row: { maxSendsPerDay: number; minSecondsBetweenSends: number; testRecipient: string }): SendSettingsView {
