@@ -14,7 +14,7 @@ const schema = z.object({
     .string()
     .default('http://localhost:3847/api/auth/google/callback'),
   TOKEN_ENCRYPTION_KEY: z.string().min(16),
-  MAX_SENDS_PER_DAY: z.coerce.number().int().positive().max(100).default(20),
+  MAX_SENDS_PER_DAY: z.coerce.number().int().positive().max(500).default(20),
   MIN_SECONDS_BETWEEN_SENDS: z.coerce.number().int().min(0).default(60),
   MAX_CONTACT_ATTEMPTS_PER_EMAIL: z.coerce.number().int().positive().max(5).default(1),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),

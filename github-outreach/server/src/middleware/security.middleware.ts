@@ -21,16 +21,23 @@ function githubUserscriptAllowed(method: string, path: string): boolean {
     || path === '/api/contacts'
     || path === '/api/contacts/lookup'
     || path === '/api/templates'
+    || path === '/api/settings'
   )) {
     return true;
   }
+  if (method === 'PATCH' && path === '/api/settings') return true;
   return method === 'POST' && (
     path === '/api/contacts'
     || path === '/api/contacts/bulk'
     || path === '/api/outreach/bulk-draft'
     || path === '/api/outreach/bulk-approve'
     || path === '/api/outreach/bulk-send'
+    || path === '/api/outreach/placement-test'
   );
+}
+
+function extensionOrigin(origin: string | undefined): boolean {
+  return Boolean(origin && /^chrome-extension:\/\/[a-p]{32}$/i.test(origin));
 }
 
 export function securityMiddleware(req: Request, res: Response, next: NextFunction): void {
@@ -52,8 +59,9 @@ export function securityMiddleware(req: Request, res: Response, next: NextFuncti
   res.setHeader('Access-Control-Allow-Private-Network', 'true');
 
   const origin = req.header('origin');
-  const userscriptOrigin = origin === 'https://github.com' || origin === 'null';
-  if (origin && origin !== 'null' && !allowedOrigins.includes(origin)) {
+  const fromExtension = extensionOrigin(origin);
+  const userscriptOrigin = origin === 'https://github.com' || origin === 'null' || fromExtension;
+  if (origin && origin !== 'null' && !allowedOrigins.includes(origin) && !fromExtension) {
     res.status(403).json({ success: false, error: 'ORIGIN', message: 'Origin not allowed.' });
     return;
   }

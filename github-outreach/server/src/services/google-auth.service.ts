@@ -7,6 +7,7 @@ import { AppError } from '../utils/errors';
 import { maskEmail } from '../utils/email';
 import { logger } from '../utils/logger';
 import { startOfLocalDay } from '../utils/send-policy';
+import { getSendSettings } from './settings.service';
 
 const pendingStates = new Map<string, number>();
 
@@ -177,14 +178,16 @@ export async function authStatus() {
   const sendsToday = await prisma.outreach.count({
     where: { status: 'SENT', sentAt: { gte: startOfLocalDay() } },
   });
+  const limits = await getSendSettings();
   return {
     configured: config.googleConfigured,
     connected: Boolean(credential),
     email: credential?.accountEmail ?? null,
     expiresAt: credential?.expiresAt?.toISOString() ?? null,
     sendsToday,
-    maxSendsPerDay: config.maxSendsPerDay,
-    minSecondsBetweenSends: config.minSecondsBetweenSends,
+    maxSendsPerDay: limits.maxSendsPerDay,
+    minSecondsBetweenSends: limits.minSecondsBetweenSends,
+    testRecipient: limits.testRecipient,
     maxContactAttempts: config.maxContactAttempts,
     testMode: config.outreachTestMode,
   };

@@ -9,6 +9,7 @@ import { evaluateDraft, evaluateSend, startOfLocalDay } from '../utils/send-poli
 import { transitionError } from '../utils/status';
 import { contextFromContact, hasUnresolved, interpolate } from '../utils/template';
 import { getTemplate } from './template.service';
+import { getSendSettings } from './settings.service';
 
 let sendQueue: Promise<unknown> = Promise.resolve();
 
@@ -154,15 +155,16 @@ export async function sendOutreach(outreachId: string) {
       orderBy: { sentAt: 'desc' },
     });
 
+    const limits = await getSendSettings();
     const decision = evaluateSend({
       outreachStatus: outreach.status,
       contactStatus: outreach.contact.status,
       email: outreach.contact.email,
       alreadySent: Boolean(outreach.sentAt || outreach.gmailMessageId || outreach.status === 'SENT'),
       sendsToday,
-      maxSendsPerDay: config.maxSendsPerDay,
+      maxSendsPerDay: limits.maxSendsPerDay,
       lastSentAt: lastSent?.sentAt ?? null,
-      minSecondsBetweenSends: config.outreachTestMode ? 0 : config.minSecondsBetweenSends,
+      minSecondsBetweenSends: config.outreachTestMode ? 0 : limits.minSecondsBetweenSends,
       contactAttempts: outreach.contact.contactAttempts,
       maxContactAttempts: config.maxContactAttempts,
     });
@@ -371,12 +373,18 @@ export async function sendOutreachBulk(outreachIds: string[]) {
   };
 }
 
-export async function sendPlacementTest(input: { templateId?: string; subject?: string; body?: string }) {
+export async function sendPlacementTest(input: { templateId?: string; subject?: string; body?: string; to?: string }) {
   const credential = await prisma.googleCredential.findFirst({ orderBy: { updatedAt: 'desc' } });
-  const to = credential?.accountEmail?.trim();
-  if (!to) {
+  if (!credential) {
     throw new AppError(400, 'Connect Gmail before sending a placement test.', 'NOT_CONNECTED');
   }
+  const limits = await getSendSettings();
+  const requested = input.to?.trim() || limits.testRecipient || credential.accountEmail?.trim() || '';
+  const checked = validateEmail(requested);
+  if (!checked.ok) {
+    throw new AppError(400, 'Enter the email address that should receive the test.', 'INVALID_EMAIL');
+  }
+  const to = checked.email;
 
   let subject = input.subject?.trim() ?? '';
   let body = input.body?.trim() ?? '';
@@ -421,7 +429,7 @@ export async function sendPlacementTest(input: { templateId?: string; subject?: 
   }
 
   await sendPlainEmail({ to, subject, body });
-  logger.info({ email: maskEmail(to) }, '[Gmail] Placement test sent to the connected account');
+  logger.info({ email: maskEmail(to) }, '[Gmail] Placement test sent');
   return {
     testMode: false,
     sent: true,

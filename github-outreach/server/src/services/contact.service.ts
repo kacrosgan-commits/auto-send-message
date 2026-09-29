@@ -6,6 +6,7 @@ import { maskEmail, validateEmail } from '../utils/email';
 import { AppError } from '../utils/errors';
 import { logger } from '../utils/logger';
 import { startOfLocalDay } from '../utils/send-policy';
+import { getSendSettings } from './settings.service';
 import { isDoNotContact, transitionError } from '../utils/status';
 import type { ContactStatus } from '../types';
 
@@ -302,6 +303,7 @@ export async function getSummary() {
   const sendsToday = await prisma.outreach.count({
     where: { status: 'SENT', sentAt: { gte: startOfLocalDay() } },
   });
+  const limits = await getSendSettings();
   return {
     total,
     ready: counts.NEW ?? 0,
@@ -313,8 +315,9 @@ export async function getSummary() {
     doNotContact,
     optedOut: counts.OPTED_OUT ?? 0,
     sendsToday,
-    maxSendsPerDay: config.maxSendsPerDay,
-    minSecondsBetweenSends: config.minSecondsBetweenSends,
+    maxSendsPerDay: limits.maxSendsPerDay,
+    minSecondsBetweenSends: limits.minSecondsBetweenSends,
+    testRecipient: limits.testRecipient,
     maxContactAttempts: config.maxContactAttempts,
   };
 }

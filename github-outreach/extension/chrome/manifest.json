@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "GitHub Outreach",
+  "version": "1.4.0",
+  "description": "Collect public GitHub profile emails into the local outreach server and send them on a schedule you set.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://github.com/*",
+    "http://127.0.0.1:3847/*",
+    "http://localhost:3847/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/search*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

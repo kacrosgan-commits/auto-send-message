@@ -46,7 +46,7 @@ outreachRouter.post(
   '/bulk-approve',
   validate({
     body: z.object({
-      outreachIds: z.array(z.string().min(1).max(64)).min(1).max(50),
+      outreachIds: z.array(z.string().min(1).max(64)).min(1).max(500),
     }),
   }),
   asyncRoute(async (req, res) => {
@@ -73,6 +73,7 @@ outreachRouter.post(
       templateId: z.string().min(1).max(64).optional(),
       subject: z.string().trim().min(1).max(200).optional(),
       body: z.string().trim().min(1).max(20000).optional(),
+      to: z.string().trim().max(320).optional(),
     }).refine((value) => Boolean(value.templateId || (value.subject && value.body)), {
       message: 'Choose a template or a message to test.',
     }),

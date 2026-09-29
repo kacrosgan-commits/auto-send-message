@@ -101,11 +101,11 @@ While the consent screen stays in Testing, Google expires refresh tokens after 7
 4. Choose the Gmail account that should send mail and allow the requested scopes.
 5. You land back on the dashboard with the connected address. The browser never receives the refresh token.
 
-## 4. Install the Tampermonkey script
+## 4. Install the Chrome extension
 
-1. Install [Tampermonkey](https://www.tampermonkey.net/).
-2. Create a new script and paste `github-outreach/extension/github-outreach.user.js`.
-3. Save it. The stylesheet in `extension/styles.css` is already inlined in the userscript.
+1. Open `chrome://extensions`.
+2. Turn on **Developer mode**.
+3. Click **Load unpacked** and choose `github-outreach/extension/chrome`.
 4. Open a GitHub **Users** search while logged in to GitHub, for example:
 
 ```text
@@ -127,6 +127,12 @@ or:
 ```
 
 Click the email to copy it. Click **+ Outreach** to save the person. A second click, or a duplicate email, stays on **✓ Added** and the row says **Already in outreach**. Profile lookups are cached for 24 hours, queued with at most 2 at a time, and spaced 200–500ms apart. **Refresh** bypasses the cache for that person.
+
+The toolbar on the search page can collect more than the current page. Set **Public emails** from 1 to 500 and click **Collect public emails**. It follows Next until it has saved that many public emails, you click **Stop**, or GitHub runs out of results. One user search lists about 1,000 people, and only some of them publish an email, so a narrow search may finish below 500.
+
+Set **Seconds between sends** and **Max per day** (up to 500), then click **Send collected**. The server waits that many seconds between messages. 100 messages at 60 seconds take about 100 minutes. 500 messages at 60 seconds take about 8 hours. Leave the GitHub tab open while it sends.
+
+**Send test** delivers one copy of the selected template to the address in **Test inbox**. Check Inbox and Spam there. The same fields are on the dashboard under **Settings → Send timing**.
 
 The bottom-right **GitHub Outreach** panel shows counts and opens the dashboard. It is draggable and remembers whether it was collapsed. If the local server is down, email badges still work and the panel says **Outreach server offline** with **Retry**.
 
@@ -176,12 +182,16 @@ MIN_SECONDS_BETWEEN_SENDS=60
 MAX_CONTACT_ATTEMPTS_PER_EMAIL=1
 ```
 
-The daily cap cannot be configured above 100. There is no Send all control.
+The daily cap can be set from 1 to 500 on the dashboard (**Settings → Send timing**) or in the extension toolbar. After pulling this version, apply the new database table:
+
+```bash
+npx prisma migrate deploy
+```
 
 ## Architecture
 
 ```text
-extension/github-outreach.user.js
+extension/chrome
   GitHub user search → public profile HTML → POST /api/contacts
 
 server (Express + Prisma + SQLite)

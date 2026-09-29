@@ -72,6 +72,8 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('focus', scheduleRefresh);
 window.setInterval(() => {
   if (document.visibilityState !== 'visible' || state.modal || state.busy) return;
+  const active = document.activeElement;
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
   refreshAll('poll');
 }, 10000);
 
@@ -423,15 +425,21 @@ function outreachView() {
         disabled: state.busy || waiting === 0,
         onclick: confirmApproveAndSendAll,
       }, waiting ? `Approve & send all (${waiting})` : 'Approve & send all'),
+      state.view === 'sent' ? null : h('input', {
+        id: 'test-recipient',
+        type: 'email',
+        placeholder: 'Test inbox',
+        value: state.auth?.testRecipient || '',
+      }),
       state.view === 'sent' ? null : h('button', {
         class: 'btn',
         disabled: state.busy || (!state.outreach.length && !state.templateId),
         onclick: confirmPlacementTest,
-      }, 'Send test to me'),
+      }, 'Send test'),
     ]),
     h('p', { class: 'muted' }, state.view === 'sent'
       ? 'Sent messages stay in Gmail. This list only shows messages this app sent.'
-      : 'Approve & send all handles every draft and every approved message. Send test to me delivers one copy only to your connected Gmail so you can check Inbox or Spam.'),
+      : 'Approve & send all handles every draft and every approved message. Send test delivers one copy to the address in the box. Leave the box blank to use the connected Gmail.'),
     state.outreach.length
       ? h('div', { class: 'table-wrap' }, [
           h('table', {}, [
@@ -483,11 +491,17 @@ function settingsView() {
           : h('div', { class: 'warning' }, 'Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to server/.env, then restart the server.'),
     ]),
     h('div', { class: 'card' }, [
-      h('h2', {}, 'Send safeguards'),
+      h('h2', {}, 'Send timing'),
       infoLine('Sends today', auth ? `${auth.sendsToday} / ${auth.maxSendsPerDay}` : '—'),
-      infoLine('Minimum seconds between sends', auth ? String(auth.minSecondsBetweenSends) : '—'),
       infoLine('Max attempts per email', auth ? String(auth.maxContactAttempts) : '—'),
-      h('p', { class: 'muted' }, 'Approve & send all on Drafts or Approved sends the whole list, spaced by the cooldown above. Send test to me goes only to your connected Gmail.'),
+      field('Max sends per day (1–500)', h('input', { id: 'max-sends', type: 'number', min: '1', max: '500', value: String(auth?.maxSendsPerDay ?? 20) })),
+      field('Seconds between sends (0–3600)', h('input', { id: 'send-gap', type: 'number', min: '0', max: '3600', value: String(auth?.minSecondsBetweenSends ?? 60) })),
+      field('Test recipient', h('input', { id: 'test-recipient', type: 'email', placeholder: 'you@example.com', value: auth?.testRecipient || '' })),
+      h('div', { class: 'row-actions' }, [
+        h('button', { class: 'btn', onclick: saveSendSettings }, 'Save timing'),
+        h('button', { class: 'btn', disabled: state.busy, onclick: confirmPlacementTest }, 'Send test'),
+      ]),
+      h('p', { class: 'muted' }, 'A batch of 100 waits this many seconds between each message. 500 messages at 60 seconds take about 8 hours. The test is one message to the address above.'),
     ]),
   ]);
 }
@@ -752,6 +766,32 @@ async function runApproveAndSendAll() {
   }
 }
 
+async function saveSendSettings() {
+  const maxSendsPerDay = Number(valueOf('#max-sends'));
+  const minSecondsBetweenSends = Number(valueOf('#send-gap'));
+  const testRecipient = valueOf('#test-recipient');
+  try {
+    const saved = await api('/api/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ maxSendsPerDay, minSecondsBetweenSends, testRecipient }),
+    });
+    if (state.auth) {
+      state.auth.maxSendsPerDay = saved.maxSendsPerDay;
+      state.auth.minSecondsBetweenSends = saved.minSecondsBetweenSends;
+      state.auth.testRecipient = saved.testRecipient;
+    }
+    if (state.summary) {
+      state.summary.maxSendsPerDay = saved.maxSendsPerDay;
+      state.summary.minSecondsBetweenSends = saved.minSecondsBetweenSends;
+    }
+    state.banner = { type: 'ok', text: `Send timing saved. ${saved.minSecondsBetweenSends}s between messages, up to ${saved.maxSendsPerDay} a day.` };
+    render();
+  } catch (error) {
+    state.banner = { type: 'error', text: error.message };
+    render();
+  }
+}
+
 function confirmPlacementTest() {
   const sample = state.outreach[0];
   if (!sample && !state.templateId) {
@@ -759,19 +799,21 @@ function confirmPlacementTest() {
     render();
     return;
   }
-  const email = state.auth?.email || 'your connected Gmail';
+  const email = valueOf('#test-recipient') || state.auth?.testRecipient || state.auth?.email || 'the connected Gmail account';
   state.modal = {
     type: 'confirm',
     title: 'Test inbox placement',
-    text: `Send one copy only to ${email}. Then check Inbox and Spam in that account. Nobody else receives this message.`,
+    text: `Send one copy only to ${email}. Then check Inbox and Spam there. Nobody else receives this message.`,
     confirmLabel: 'Send test to me',
     onConfirm: async () => {
       state.busy = true;
       render();
       try {
+        const to = valueOf('#test-recipient');
         const payload = sample
           ? { subject: sample.subject, body: sample.body }
           : { templateId: state.templateId };
+        if (to) payload.to = to;
         const result = await api('/api/outreach/placement-test', {
           method: 'POST',
           body: JSON.stringify(payload),

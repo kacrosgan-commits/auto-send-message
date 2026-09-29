@@ -5,6 +5,7 @@ import { contactsRouter } from './routes/contacts.routes';
 import { gmailRouter } from './routes/gmail.routes';
 import { outreachRouter } from './routes/outreach.routes';
 import { templatesRouter } from './routes/templates.routes';
+import { settingsRouter } from './routes/settings.routes';
 import { errorMiddleware } from './middleware/error.middleware';
 import { securityMiddleware } from './middleware/security.middleware';
 import { config } from './config';
@@ -30,6 +31,7 @@ export function createApp() {
   app.use('/api/auth', authRouter);
   app.use('/api/contacts', contactsRouter);
   app.use('/api/templates', templatesRouter);
+  app.use('/api/settings', settingsRouter);
   app.use('/api/outreach', outreachRouter);
   app.use('/api/gmail', gmailRouter);
   app.use('/api', (_req, res) => {

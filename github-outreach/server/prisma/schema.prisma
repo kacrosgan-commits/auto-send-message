@@ -81,6 +81,14 @@ model Outreach {
   @@index([sentAt])
 }
 
+model SendSettings {
+  id                     Int      @id
+  maxSendsPerDay         Int
+  minSecondsBetweenSends Int
+  testRecipient          String   @default("")
+  updatedAt              DateTime @updatedAt
+}
+
 model GoogleCredential {
   id                    String   @id @default(cuid())
   accountEmail          String?
