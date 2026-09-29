@@ -57,9 +57,37 @@ export async function sendGmailDraft(draftId: string): Promise<string> {
     if (!id) {
       throw new AppError(502, 'Send failed. Gmail did not confirm the message.', 'SEND_FAILED');
     }
+    await assertMessageWasSent(gmail, id, response.data.labelIds ?? []);
     return id;
   } catch (error) {
     throw mapGmailError(error, 'Send failed. The message was not confirmed as sent.');
+  }
+}
+
+async function assertMessageWasSent(
+  gmail: ReturnType<typeof google.gmail>,
+  messageId: string,
+  labelIds: string[],
+): Promise<void> {
+  let labels = labelIds;
+  if (!labels.length) {
+    try {
+      const fetched = await gmail.users.messages.get({
+        userId: 'me',
+        id: messageId,
+        format: 'minimal',
+      });
+      labels = fetched.data.labelIds ?? [];
+    } catch (error) {
+      logger.warn(
+        { message: error instanceof Error ? error.message : 'label check failed' },
+        '[Gmail] Could not read labels after send',
+      );
+      return;
+    }
+  }
+  if (labels.includes('DRAFT') && !labels.includes('SENT')) {
+    throw new AppError(502, 'Gmail kept this message as a draft. It was not sent.', 'STILL_DRAFT');
   }
 }
 

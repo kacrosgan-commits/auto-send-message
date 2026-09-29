@@ -41,6 +41,10 @@
     #gho-toolbar input { width: 92px; }
     #gho-test-to { width: 180px; }
     #gho-collect-status { color: var(--fgColor-muted, #8b949e); }
+    #gho-found { margin: 0 0 12px; padding: 12px; border: 1px solid var(--borderColor-default, #30363d); border-radius: 12px; background: var(--bgColor-default, #0d1117); color: var(--fgColor-default, #f0f6fc); }
+    #gho-found h2 { margin: 0 0 8px; font-size: 16px; }
+    #gho-found-scroll { max-height: 480px; overflow: auto; }
+    .gho-found-row { display: grid; grid-template-columns: 36px minmax(120px, 1fr) minmax(180px, 1.4fr) minmax(80px, 0.8fr); gap: 8px; align-items: center; padding: 6px 0; border-top: 1px solid var(--borderColor-muted, #30363d); font-size: 13px; }
     #gho-toolbar .gho-primary, #gho-actionbar .gho-primary, #gho-modal .gho-primary { background: #238636; border-color: #238636; color: #fff; }
     #gho-actionbar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 81; display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--borderColor-default, #30363d); background: var(--bgColor-default, #0d1117); color: var(--fgColor-default, #f0f6fc); box-shadow: 0 8px 24px rgba(0,0,0,.28); }
     #gho-modal { position: fixed; right: 16px; top: 16px; width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; z-index: 82; padding: 14px; border-radius: 12px; border: 1px solid var(--borderColor-default, #30363d); background: var(--bgColor-default, #0d1117); color: var(--fgColor-default, #f0f6fc); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
@@ -75,6 +79,7 @@
   let collecting = false;
   let collectRun = 0;
   const collectedIds = [];
+  const foundPeople = [];
 
   function isUserSearch() {
     const url = new URL(location.href);
@@ -547,7 +552,7 @@
     const body = panel?.querySelector('.gho-panel-body');
     if (!body) return;
     body.replaceChildren();
-    body.append(stat('Public email', String(panelCounts.publicEmail)));
+    body.append(stat('Published emails', String(foundPeople.length || panelCounts.publicEmail)));
     body.append(stat('Selected', String(visibleSelected().length)));
     body.append(stat('Added', serverStats ? String(serverStats.total) : '—'));
     body.append(stat('Drafted', serverStats ? String(serverStats.drafted) : '—'));
@@ -869,16 +874,17 @@
       const collectStatus = document.createElement('div');
       collectStatus.id = 'gho-collect-status';
       collectStatus.className = 'gho-toolbar-row';
-      collectStatus.textContent = 'Collect walks this user search, page by page, until it saves the number of public emails you set. GitHub lists about 1,000 people per search.';
+      collectStatus.textContent = 'GitHub draws about 10 people on this page. Set Public emails to 100–500 and click Collect public emails. The list below fills with published addresses from the rest of this search.';
       const counts = document.createElement('div');
       counts.id = 'gho-toolbar-counts';
       counts.className = 'gho-toolbar-row';
       bar.append(title, toggles, templateRow, actions, collectRow, collectActions, testRow, collectStatus, counts);
       loadTemplates();
       loadSendSettings();
-    } else if (bar.nextElementSibling !== list) {
+    } else if (bar.nextElementSibling !== list && bar.nextElementSibling?.id !== 'gho-found') {
       list.parentElement.insertBefore(bar, list);
     }
+    ensureFoundList();
     updateToolbarCounts();
   }
 
@@ -910,7 +916,8 @@
     const node = document.querySelector('#gho-toolbar-counts');
     if (!node) return;
     const withEmail = pageProfiles().filter((profile) => profile.email).length;
-    node.textContent = `Detected: ${panelCounts.results}    With Public Email: ${withEmail}    Selected: ${visibleSelected().length}    Added: ${addedOnPage()}`;
+    const goal = document.querySelector('#gho-goal')?.value || '100';
+    node.textContent = `Showing ${foundPeople.length} / ${goal} published emails. This GitHub page: ${panelCounts.results} people, ${withEmail} with a public email.`;
   }
 
   function loadTemplates() {
@@ -1135,36 +1142,100 @@
   function stopCollect() {
     collectRun += 1;
     collecting = false;
-    setCollectStatus(`Stopped. ${collectedIds.length} public emails saved from this run.`);
+    setCollectStatus(`Stopped. Showing ${foundPeople.length} published emails.`);
+    renderFoundList();
   }
 
-  function findNextPageLink() {
-    return document.querySelector('a[rel="next"]')
-      || document.querySelector('a[aria-label="Next Page"]')
-      || [...document.querySelectorAll('a')].find((anchor) => anchor.textContent.trim() === 'Next')
-      || null;
+  function ensureFoundList() {
+    const toolbar = document.querySelector('#gho-toolbar');
+    if (!toolbar) return;
+    let box = document.querySelector('#gho-found');
+    if (!box) {
+      box = document.createElement('section');
+      box.id = 'gho-found';
+      const heading = document.createElement('h2');
+      heading.id = 'gho-found-title';
+      const scroll = document.createElement('div');
+      scroll.id = 'gho-found-scroll';
+      box.append(heading, scroll);
+      toolbar.after(box);
+      renderFoundList();
+      return;
+    }
+    if (box.previousElementSibling !== toolbar) toolbar.after(box);
   }
 
-  function waitForResults(previousUrl, run) {
-    return new Promise((resolve) => {
-      const started = Date.now();
-      const timer = window.setInterval(() => {
-        if (run !== collectRun) {
-          window.clearInterval(timer);
-          resolve(false);
-          return;
-        }
-        const moved = location.href !== previousUrl;
-        const list = document.querySelector('[data-testid="results-list"]');
-        if (moved && list) {
-          window.clearInterval(timer);
-          resolve(true);
-        } else if (Date.now() - started > 15000) {
-          window.clearInterval(timer);
-          resolve(false);
-        }
-      }, 300);
+  function renderFoundList() {
+    const box = document.querySelector('#gho-found');
+    if (!box) return;
+    const goal = Math.min(500, Math.max(1, Number(document.querySelector('#gho-goal')?.value) || 100));
+    const title = box.querySelector('#gho-found-title');
+    if (title) title.textContent = `Public emails found: ${foundPeople.length} / ${goal}`;
+    const scroll = box.querySelector('#gho-found-scroll');
+    if (!scroll) return;
+    const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40;
+    scroll.replaceChildren();
+    if (!foundPeople.length) {
+      const empty = document.createElement('p');
+      empty.className = 'gho-note';
+      empty.textContent = 'None yet. Collect reads the rest of this GitHub user search. The page itself only lists about 10 people.';
+      scroll.append(empty);
+      return;
+    }
+    foundPeople.forEach((person, index) => {
+      const row = document.createElement('div');
+      row.className = 'gho-found-row';
+      const indexNode = document.createElement('span');
+      indexNode.textContent = String(index + 1);
+      const name = document.createElement('strong');
+      name.textContent = person.displayName || person.username;
+      const email = document.createElement('span');
+      email.textContent = person.email;
+      const login = document.createElement('span');
+      login.className = 'gho-note';
+      login.textContent = person.username;
+      row.append(indexNode, name, email, login);
+      scroll.append(row);
     });
+    if (atBottom) scroll.scrollTop = scroll.scrollHeight;
+  }
+
+  async function fetchSearchPage(page) {
+    const url = new URL(location.href);
+    url.searchParams.set('type', 'users');
+    url.searchParams.set('p', String(page));
+    const response = await fetch(url.toString(), {
+      credentials: 'include',
+      headers: { Accept: 'text/html' },
+    });
+    if (response.status === 429) {
+      const retryAfter = Number(response.headers.get('retry-after') || '5');
+      await sleep(Math.min(Math.max(retryAfter, 1), 30) * 1000);
+      throw new Error('rate limit');
+    }
+    if (!response.ok) throw new Error('search fetch failed');
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    if (/sign in to github/i.test(doc.querySelector('title')?.textContent || '')) {
+      throw new Error('login wall');
+    }
+    const people = [];
+    const seen = new Set();
+    doc.querySelectorAll('.search-title').forEach((titleNode) => {
+      const link = [...titleNode.querySelectorAll('a[href]')].find((anchor) => /^\/[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/?$/.test(anchor.getAttribute('href') || ''));
+      if (!link) return;
+      const username = (link.getAttribute('href') || '').replace(/\//g, '');
+      if (!username || seen.has(username)) return;
+      seen.add(username);
+      const nameNode = titleNode.querySelector('[class*="titleName"]') || link;
+      people.push({
+        username,
+        displayName: cleanText(nameNode) || username,
+        githubUrl: `https://github.com/${username}`,
+        avatarUrl: null,
+      });
+    });
+    return { people, hasNext: Boolean(doc.querySelector('a[rel="next"]')) };
   }
 
   async function lookupCollectedProfile(username) {
@@ -1207,60 +1278,82 @@
     collecting = true;
     const run = ++collectRun;
     collectedIds.length = 0;
+    foundPeople.length = 0;
+    ensureFoundList();
+    renderFoundList();
     const seen = new Set();
-    const found = new Set();
-    setCollectStatus(`Collecting ${goal} public emails…`);
+    setCollectStatus(`Reading this search for ${goal} published emails. The list below updates as each one is found.`);
     try {
-      for (let page = 1; page <= 100 && found.size < goal && run === collectRun; page += 1) {
-        const list = document.querySelector('[data-testid="results-list"]');
-        const cards = list ? findCards(list) : [];
-        if (!cards.length) {
-          setCollectStatus('This page has no user results. Sign in to GitHub and use a Users search.');
+      for (let page = 1; page <= 100 && foundPeople.length < goal && run === collectRun; page += 1) {
+        let pageResult;
+        try {
+          pageResult = await fetchSearchPage(page);
+        } catch (error) {
+          const message = error?.message || '';
+          if (/login wall/i.test(message)) {
+            setCollectStatus('GitHub asked you to sign in. Sign in, then collect again.');
+            return;
+          }
+          if (/rate limit/i.test(message)) {
+            setCollectStatus(`GitHub asked us to slow down. Showing ${foundPeople.length} published emails. Wait, then collect again.`);
+            return;
+          }
+          setCollectStatus(`Stopped on search page ${page}. Showing ${foundPeople.length} published emails.`);
           break;
         }
-        for (const card of cards) {
-          if (run !== collectRun || found.size >= goal) break;
-          const parsed = parseCard(card);
-          if (!parsed || seen.has(parsed.username)) continue;
-          seen.add(parsed.username);
-          profiles.set(parsed.username, { ...(profiles.get(parsed.username) || {}), ...parsed, card });
-          setCollectStatus(`Page ${page}. Checked ${seen.size}. Saved ${found.size} of ${goal}. ${parsed.username}`);
+        if (!pageResult.people.length) {
+          setCollectStatus(`Search ended. Showing ${foundPeople.length} published emails from ${seen.size} profiles.`);
+          break;
+        }
+        let fresh = 0;
+        for (const person of pageResult.people) {
+          if (run !== collectRun || foundPeople.length >= goal) break;
+          if (seen.has(person.username)) continue;
+          seen.add(person.username);
+          fresh += 1;
+          setCollectStatus(`Search page ${page}. Checked ${seen.size} profiles. Showing ${foundPeople.length} / ${goal}. ${person.username}`);
           try {
-            const record = await lookupCollectedProfile(parsed.username);
-            applyProfile(parsed.username, record);
-            if (record.email && !found.has(record.email)) {
-              found.add(record.email);
-              await saveCollected(parsed, record);
+            const record = await lookupCollectedProfile(person.username);
+            if (record.email && !foundPeople.some((row) => row.email === record.email)) {
+              foundPeople.push({
+                username: person.username,
+                displayName: record.displayName || person.displayName || person.username,
+                email: record.email,
+                githubUrl: person.githubUrl,
+                avatarUrl: record.avatarUrl || null,
+                bio: record.bio || null,
+                location: record.location || null,
+                company: record.company || null,
+              });
+              renderFoundList();
+              updateToolbarCounts();
+              updatePanel();
+              await saveCollected(foundPeople[foundPeople.length - 1], record);
             }
           } catch (error) {
-            const message = error?.message || '';
-            if (/login wall/i.test(message)) {
+            if (/login wall/i.test(error?.message || '')) {
               setCollectStatus('GitHub asked you to sign in. Sign in, then collect again.');
               return;
             }
           }
-          await sleep(700);
+          await sleep(500);
         }
-        if (found.size >= goal || run !== collectRun) break;
-        const next = findNextPageLink();
-        if (!next) {
-          setCollectStatus(`Search ended at ${found.size} public emails from ${seen.size} profiles. GitHub lists about 1,000 people for one search.`);
+        if (!fresh || !pageResult.hasNext || foundPeople.length >= goal || run !== collectRun) {
+          if (run === collectRun && foundPeople.length < goal) {
+            setCollectStatus(`Search ended. Showing ${foundPeople.length} published emails from ${seen.size} profiles. GitHub lists about 1,000 people for one search, and only some publish an email.`);
+          }
           break;
         }
-        const previousUrl = location.href;
-        next.click();
-        const moved = await waitForResults(previousUrl, run);
-        if (!moved) {
-          setCollectStatus(`Stopped at ${found.size} public emails. The next page did not load.`);
-          break;
-        }
-        await sleep(600);
+        await sleep(400);
       }
-      if (run === collectRun && found.size >= goal) {
-        setCollectStatus(`Saved ${found.size} public emails. Set the seconds between sends, then click Send collected.`);
+      if (run === collectRun && foundPeople.length >= goal) {
+        setCollectStatus(`Showing ${foundPeople.length} published emails.`);
       }
     } finally {
       if (run === collectRun) collecting = false;
+      renderFoundList();
+      updateToolbarCounts();
+      updatePanel();
       refreshStats();
     }
   }

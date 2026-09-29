@@ -19,7 +19,7 @@ const schema = z.object({
   MAX_CONTACT_ATTEMPTS_PER_EMAIL: z.coerce.number().int().positive().max(5).default(1),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   NODE_ENV: z.string().default('development'),
-  OUTREACH_TEST_MODE: z.enum(['true', 'false']).default('true'),
+  OUTREACH_TEST_MODE: z.enum(['true', 'false']).default('false'),
 });
 
 const parsed = schema.safeParse(process.env);

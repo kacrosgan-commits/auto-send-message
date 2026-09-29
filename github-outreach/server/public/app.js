@@ -180,6 +180,9 @@ function shell() {
           onclick: () => setView(id),
         }, label),
       )),
+      state.auth?.testMode
+        ? h('div', { class: 'warning' }, 'Test mode is on. Messages stay in Gmail Drafts and are not marked sent. Set OUTREACH_TEST_MODE=false in server/.env and restart.')
+        : null,
       banner(),
       viewBody(),
       modal(),

@@ -3,6 +3,7 @@ import { config } from './config';
 import { sqliteDatabasePath } from './lib/prisma';
 import { logger } from './utils/logger';
 import { ensureDefaultTemplate } from './services/template.service';
+import { revertUnsentTestSends } from './services/outreach.service';
 
 async function main(): Promise<void> {
   logger.info(`[Database] SQLite database: ${sqliteDatabasePath}`);
@@ -11,6 +12,10 @@ async function main(): Promise<void> {
     logger.warn('TOKEN_ENCRYPTION_KEY is still the example value. Replace it before connecting Gmail.');
   }
   await ensureDefaultTemplate();
+  const reverted = await revertUnsentTestSends();
+  if (reverted > 0) {
+    logger.warn(`[Outreach] Moved ${reverted} messages back to approved. They were marked sent, but Gmail never sent them.`);
+  }
   const app = createApp();
   app.listen(config.port, config.host, () => {
     logger.info({ host: config.host, port: config.port }, 'GitHub Outreach listening');

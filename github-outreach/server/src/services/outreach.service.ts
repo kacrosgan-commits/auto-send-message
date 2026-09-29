@@ -169,14 +169,19 @@ export async function sendOutreach(outreachId: string) {
       maxContactAttempts: config.maxContactAttempts,
     });
     if (!decision.ok) throw new AppError(400, decision.message, decision.code);
-    if (!outreach.gmailDraftId) {
-      throw new AppError(400, 'This message has no Gmail draft to send.', 'DRAFT_MISSING');
+    if (config.outreachTestMode) {
+      throw new AppError(
+        400,
+        'Test mode is on, so Gmail was not asked to send. The message is still a draft. Set OUTREACH_TEST_MODE=false in server/.env and restart.',
+        'TEST_MODE',
+      );
+    }
+    if (!outreach.gmailDraftId || outreach.gmailDraftId.startsWith('test-draft:')) {
+      throw new AppError(400, 'This message has no Gmail draft to send. Create the draft again.', 'DRAFT_MISSING');
     }
 
     try {
-      const gmailMessageId = config.outreachTestMode
-        ? `test-mode:${outreachId}`
-        : await sendGmailDraft(outreach.gmailDraftId);
+      const gmailMessageId = await sendGmailDraft(outreach.gmailDraftId);
       const sentAt = new Date();
       const updated = await prisma.outreach.update({
         where: { id: outreachId },
@@ -192,8 +197,8 @@ export async function sendOutreach(outreachId: string) {
         },
       });
       logger.info(
-        { outreachId, contactId: outreach.contactId, email: maskEmail(outreach.contact.email), testMode: config.outreachTestMode },
-        config.outreachTestMode ? '[Gmail] Test mode simulated send' : '[Gmail] Message sent',
+        { outreachId, contactId: outreach.contactId, email: maskEmail(outreach.contact.email) },
+        '[Gmail] Message sent',
       );
       return updated;
     } catch (error) {
@@ -226,6 +231,7 @@ const SKIP_SEND_CODES = new Set([
   'COOLDOWN',
   'STATUS',
   'DRAFT_MISSING',
+  'TEST_MODE',
 ]);
 
 export async function createDraftsBulk(contactIds: string[], templateId: string) {
@@ -437,4 +443,60 @@ export async function sendPlacementTest(input: { templateId?: string; subject?: 
     subject,
     message: `Sent one copy to ${to}. Open Gmail and check Inbox and Spam. Show original on that message shows whether SPF, DKIM, and DMARC passed. This copy was not sent to anyone else.`,
   };
+}
+
+export async function revertUnsentTestSends(): Promise<number> {
+  const rows = await prisma.outreach.findMany({
+    where: {
+      status: 'SENT',
+      OR: [
+        { gmailMessageId: null },
+        { gmailMessageId: { startsWith: 'test-mode:' } },
+        { gmailMessageId: { startsWith: 'test-draft:' } },
+      ],
+    },
+    select: { id: true, contactId: true, gmailDraftId: true },
+  });
+  let reopened = 0;
+  for (const row of rows) {
+    const hasRealDraft = Boolean(row.gmailDraftId && !row.gmailDraftId.startsWith('test-draft:'));
+    await prisma.outreach.update({
+      where: { id: row.id },
+      data: {
+        status: hasRealDraft ? 'APPROVED' : 'DRAFTED',
+        sentAt: null,
+        gmailMessageId: null,
+        failureReason: null,
+        approvedAt: hasRealDraft ? new Date() : null,
+      },
+    });
+    const otherRealSends = await prisma.outreach.count({
+      where: {
+        contactId: row.contactId,
+        status: 'SENT',
+        gmailMessageId: { not: null },
+        NOT: {
+          OR: [
+            { gmailMessageId: { startsWith: 'test-mode:' } },
+            { gmailMessageId: { startsWith: 'test-draft:' } },
+          ],
+        },
+      },
+    });
+    if (otherRealSends === 0) {
+      const contact = await prisma.contact.findUnique({ where: { id: row.contactId } });
+      if (contact && contact.status !== 'OPTED_OUT' && contact.status !== 'DO_NOT_CONTACT') {
+        await prisma.contact.update({
+          where: { id: row.contactId },
+          data: {
+            status: hasRealDraft ? 'APPROVED' : 'DRAFTED',
+            contactAttempts: Math.max(0, contact.contactAttempts - 1),
+            lastContactedAt: null,
+          },
+        });
+      }
+    }
+    reopened += 1;
+  }
+  return reopened;
 }
