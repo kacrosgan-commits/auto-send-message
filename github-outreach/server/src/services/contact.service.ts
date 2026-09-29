@@ -149,6 +149,7 @@ export async function saveContact(input: ContactInput) {
       },
       incoming,
     );
+    const reopened = await shouldReopenUndelivered(existing);
     const contact = await prisma.contact.update({
       where: { id: existing.id },
       data: {
@@ -160,10 +161,18 @@ export async function saveContact(input: ContactInput) {
         company: merged.company,
         location: merged.location,
         searchKeyword: merged.searchKeyword,
+        ...(reopened ? { status: 'NEW' } : {}),
       },
     });
-    logger.info({ contactId: contact.id }, `[Contacts] Existing contact id=${contact.id}`);
-    return { success: true, contact, created: false, duplicate: true, message: 'Already in outreach' };
+    logger.info({ contactId: contact.id, reopened }, `[Contacts] Existing contact id=${contact.id}`);
+    return {
+      success: true,
+      contact,
+      created: false,
+      duplicate: !reopened,
+      reopened,
+      message: reopened ? 'Moved back to ready. The earlier send never went out.' : 'Already in outreach',
+    };
   }
 
   const contact = await prisma.contact.create({
@@ -208,6 +217,42 @@ export async function saveContactsBulk(items: unknown[]) {
   }
 
   return { success: true, created, duplicates, skipped, contacts, skippedItems };
+}
+
+async function shouldReopenUndelivered(contact: {
+  id: string;
+  status: string;
+  contactAttempts: number;
+  lastContactedAt: Date | null;
+}): Promise<boolean> {
+  if (contact.status !== 'FAILED' || contact.contactAttempts > 0 || contact.lastContactedAt) return false;
+  const sent = await prisma.outreach.findMany({
+    where: { contactId: contact.id, status: 'SENT' },
+    select: { gmailMessageId: true },
+  });
+  return !contactRecordWasContacted({
+    status: contact.status,
+    contactAttempts: contact.contactAttempts,
+    lastContactedAt: contact.lastContactedAt,
+    sentMessageIds: sent.map((row) => row.gmailMessageId),
+  });
+}
+
+export async function reopenUndeliveredFailures(): Promise<number> {
+  const failed = await prisma.contact.findMany({
+    where: { status: 'FAILED', contactAttempts: 0, lastContactedAt: null },
+    select: { id: true, status: true, contactAttempts: true, lastContactedAt: true },
+  });
+  const ids: string[] = [];
+  for (const contact of failed) {
+    if (await shouldReopenUndelivered(contact)) ids.push(contact.id);
+  }
+  if (!ids.length) return 0;
+  await prisma.contact.updateMany({
+    where: { id: { in: ids } },
+    data: { status: 'NEW' },
+  });
+  return ids.length;
 }
 
 export async function emailsAlreadyContacted(emails: string[]): Promise<Set<string>> {

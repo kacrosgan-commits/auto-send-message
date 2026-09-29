@@ -5,6 +5,7 @@ import { logger } from './utils/logger';
 import { ensureDefaultTemplate } from './services/template.service';
 import { reopenDraftlessFailures, revertUnsentTestSends } from './services/outreach.service';
 import { ensureSendSettingsTable } from './services/settings.service';
+import { reopenUndeliveredFailures } from './services/contact.service';
 
 async function main(): Promise<void> {
   logger.info(`[Database] SQLite database: ${sqliteDatabasePath}`);
@@ -15,6 +16,10 @@ async function main(): Promise<void> {
   await configureSqlite();
   await ensureSendSettingsTable();
   await ensureDefaultTemplate();
+  const readyAgain = await reopenUndeliveredFailures();
+  if (readyAgain > 0) {
+    logger.warn(`[Contacts] Moved ${readyAgain} failed contacts back to ready. Those emails were saved, but never delivered.`);
+  }
   const reopened = await reopenDraftlessFailures();
   if (reopened > 0) {
     logger.warn(`[Outreach] Moved ${reopened} failed messages back to approved so they can be sent.`);

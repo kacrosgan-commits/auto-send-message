@@ -136,14 +136,23 @@ function filterQuery() {
   return text ? `?${text}` : '';
 }
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-  });
+async function api(path, options = {}, attempt = 0) {
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    });
+  } catch (error) {
+    if (attempt < 2) {
+      await delay(500 * (attempt + 1));
+      return api(path, options, attempt + 1);
+    }
+    throw new Error('Could not reach the outreach server. Keep the server window open, then click Refresh.');
+  }
   const text = await response.text();
   let data = {};
   if (text) {

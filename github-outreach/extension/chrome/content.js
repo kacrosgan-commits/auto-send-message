@@ -1313,6 +1313,9 @@
       rememberContacted(contact);
       return false;
     }
+    const created = Boolean(result.data?.created);
+    const reopened = Boolean(result.data?.reopened);
+    if (!created && !reopened) return false;
     if (contact.status === 'NEW' || contact.status === 'FAILED') collectedIds.push(contact.id);
     return true;
   }
