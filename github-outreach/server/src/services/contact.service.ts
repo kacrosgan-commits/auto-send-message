@@ -303,6 +303,38 @@ export async function deleteContact(id: string) {
   logger.info({ contactId: id }, '[Contact] Deleted');
 }
 
+export async function listContactedAddresses(): Promise<{ emails: string[]; usernames: string[] }> {
+  const contacts = await prisma.contact.findMany({
+    where: {
+      OR: [
+        { status: { in: ['SENT', 'REPLIED', 'DO_NOT_CONTACT', 'OPTED_OUT'] } },
+        { contactAttempts: { gt: 0 } },
+        { lastContactedAt: { not: null } },
+        {
+          outreaches: {
+            some: {
+              status: 'SENT',
+              gmailMessageId: { not: null },
+              NOT: {
+                OR: [
+                  { gmailMessageId: { startsWith: 'test-mode:' } },
+                  { gmailMessageId: { startsWith: 'test-draft:' } },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    },
+    select: { email: true, username: true },
+    take: 5000,
+  });
+  return {
+    emails: contacts.map((row) => normalizeEmail(row.email)).filter(Boolean),
+    usernames: contacts.map((row) => row.username.trim().toLowerCase()).filter(Boolean),
+  };
+}
+
 export async function lookupContacts(emails: string[], usernames: string[]) {
   const normalizedEmails = emails
     .map((email) => email.trim().toLowerCase())

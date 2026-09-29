@@ -20,6 +20,7 @@ function githubUserscriptAllowed(method: string, path: string): boolean {
     || path === '/api/stats'
     || path === '/api/contacts'
     || path === '/api/contacts/lookup'
+    || path === '/api/contacts/contacted'
     || path === '/api/templates'
     || path === '/api/settings'
   )) {

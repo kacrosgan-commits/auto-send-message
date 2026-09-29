@@ -5,6 +5,7 @@ import {
   deleteContact,
   getContact,
   getSummary,
+  listContactedAddresses,
   listContacts,
   lookupContacts,
   normalizeContactPayload,
@@ -113,6 +114,13 @@ contactsRouter.post(
     logger.info(`[Contacts] Creating ${input.username} ${maskEmail(input.email)}`);
     const result = await saveContact(input);
     res.status(result.created ? 201 : 200).json(result);
+  }),
+);
+
+contactsRouter.get(
+  '/contacted',
+  asyncRoute(async (_req, res) => {
+    res.json(await listContactedAddresses());
   }),
 );
 

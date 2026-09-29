@@ -80,6 +80,9 @@
   let collectRun = 0;
   const collectedIds = [];
   const foundPeople = [];
+  const contactedEmails = new Set();
+  const contactedUsernames = new Set();
+  let skippedContacted = 0;
 
   function isUserSearch() {
     const url = new URL(location.href);
@@ -920,7 +923,8 @@
     if (!node) return;
     const withEmail = pageProfiles().filter((profile) => profile.email).length;
     const goal = document.querySelector('#gho-goal')?.value || '100';
-    node.textContent = `Showing ${foundPeople.length} / ${goal} published emails. This GitHub page: ${panelCounts.results} people, ${withEmail} with a public email.`;
+    const skipped = skippedContacted ? ` Skipped ${skippedContacted} already contacted.` : '';
+    node.textContent = `Showing ${foundPeople.length} / ${goal} new emails.${skipped} This GitHub page: ${panelCounts.results} people, ${withEmail} with a public email.`;
   }
 
   function loadTemplates() {
@@ -1174,7 +1178,8 @@
     if (!box) return;
     const goal = Math.min(500, Math.max(1, Number(document.querySelector('#gho-goal')?.value) || 100));
     const title = box.querySelector('#gho-found-title');
-    if (title) title.textContent = `Public emails found: ${foundPeople.length} / ${goal}`;
+    const skipped = skippedContacted ? ` · skipped ${skippedContacted} already contacted` : '';
+    if (title) title.textContent = `New emails found: ${foundPeople.length} / ${goal}${skipped}`;
     const scroll = box.querySelector('#gho-found-scroll');
     if (!scroll) return;
     const atBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 40;
@@ -1182,7 +1187,9 @@
     if (!foundPeople.length) {
       const empty = document.createElement('p');
       empty.className = 'gho-note';
-      empty.textContent = 'None yet. Collect reads the rest of this GitHub user search. The page itself only lists about 10 people.';
+      empty.textContent = skippedContacted
+        ? `None yet. Skipped ${skippedContacted} already contacted ${skippedContacted === 1 ? 'address' : 'addresses'} and still looking for new ones.`
+        : 'None yet. Collect reads the rest of this GitHub user search and skips addresses that were already contacted.';
       scroll.append(empty);
       return;
     }
@@ -1252,6 +1259,38 @@
     return record;
   }
 
+  function alreadyContactedRecord(contact) {
+    if (!contact) return false;
+    return contact.status === 'SENT'
+      || contact.status === 'REPLIED'
+      || contact.status === 'DO_NOT_CONTACT'
+      || contact.status === 'OPTED_OUT'
+      || Number(contact.contactAttempts) > 0
+      || Boolean(contact.lastContactedAt);
+  }
+
+  function rememberContacted(contact) {
+    const email = String(contact?.email || '').toLowerCase();
+    const username = String(contact?.username || '').toLowerCase();
+    if (email) contactedEmails.add(email);
+    if (username) contactedUsernames.add(username);
+    if (email) contactsByEmail.set(email, contact);
+  }
+
+  async function loadContactedAddresses() {
+    const data = await api('GET', '/api/contacts/contacted');
+    (data.emails || []).forEach((email) => contactedEmails.add(String(email).toLowerCase()));
+    (data.usernames || []).forEach((username) => contactedUsernames.add(String(username).toLowerCase()));
+  }
+
+  function isKnownContacted(email, username) {
+    const normalizedEmail = String(email || '').toLowerCase();
+    const normalizedUser = String(username || '').toLowerCase();
+    if (normalizedEmail && contactedEmails.has(normalizedEmail)) return true;
+    if (normalizedUser && contactedUsernames.has(normalizedUser)) return true;
+    return alreadyContactedRecord(normalizedEmail ? contactsByEmail.get(normalizedEmail) : null);
+  }
+
   async function saveCollected(parsed, record) {
     const result = await request('POST', '/api/contacts', {
       username: parsed.username,
@@ -1266,14 +1305,16 @@
       source: 'github',
     });
     const contact = result.data?.contact;
-    if (!contact?.id) return;
-    contactsByEmail.set(String(contact.email || record.email).toLowerCase(), contact);
-    savedEmails.add(String(contact.email || record.email).toLowerCase());
-    const alreadyContacted = contact.status === 'SENT'
-      || contact.status === 'REPLIED'
-      || Number(contact.contactAttempts) > 0
-      || Boolean(contact.lastContactedAt);
-    if (!alreadyContacted && (contact.status === 'NEW' || contact.status === 'FAILED')) collectedIds.push(contact.id);
+    if (!contact?.id) return null;
+    const email = String(contact.email || record.email).toLowerCase();
+    contactsByEmail.set(email, contact);
+    savedEmails.add(email);
+    if (alreadyContactedRecord(contact) || isKnownContacted(email, contact.username)) {
+      rememberContacted(contact);
+      return false;
+    }
+    if (contact.status === 'NEW' || contact.status === 'FAILED') collectedIds.push(contact.id);
+    return true;
   }
 
   async function startCollect() {
@@ -1287,10 +1328,19 @@
     const run = ++collectRun;
     collectedIds.length = 0;
     foundPeople.length = 0;
+    skippedContacted = 0;
     ensureFoundList();
     renderFoundList();
     const seen = new Set();
-    setCollectStatus(`Reading this search for ${goal} published emails. The list below updates as each one is found.`);
+    setCollectStatus('Loading addresses that were already contacted…');
+    try {
+      await loadContactedAddresses();
+    } catch (error) {
+      setCollectStatus(error?.message || 'Could not load contacted addresses. Start the outreach server, then collect again.');
+      collecting = false;
+      return;
+    }
+    setCollectStatus(`Reading this search for ${goal} new emails. ${contactedEmails.size} already contacted addresses will be skipped.`);
     try {
       for (let page = 1; page <= 100 && foundPeople.length < goal && run === collectRun; page += 1) {
         let pageResult;
@@ -1319,25 +1369,45 @@
           if (seen.has(person.username)) continue;
           seen.add(person.username);
           fresh += 1;
-          setCollectStatus(`Search page ${page}. Checked ${seen.size} profiles. Showing ${foundPeople.length} / ${goal}. ${person.username}`);
+          setCollectStatus(`Search page ${page}. Checked ${seen.size} profiles. New emails ${foundPeople.length} / ${goal}. Skipped ${skippedContacted} already contacted. ${person.username}`);
           try {
-            const record = await lookupCollectedProfile(person.username);
-            if (record.email && !foundPeople.some((row) => row.email === record.email)) {
-              foundPeople.push({
-                username: person.username,
-                displayName: record.displayName || person.displayName || person.username,
-                email: record.email,
-                githubUrl: person.githubUrl,
-                avatarUrl: record.avatarUrl || null,
-                bio: record.bio || null,
-                location: record.location || null,
-                company: record.company || null,
-              });
+            if (isKnownContacted('', person.username)) {
+              skippedContacted += 1;
               renderFoundList();
               updateToolbarCounts();
-              updatePanel();
-              await saveCollected(foundPeople[foundPeople.length - 1], record);
+              continue;
             }
+            const record = await lookupCollectedProfile(person.username);
+            const email = String(record.email || '').toLowerCase();
+            if (!email || foundPeople.some((row) => String(row.email).toLowerCase() === email)) continue;
+            if (isKnownContacted(email, person.username)) {
+              skippedContacted += 1;
+              renderFoundList();
+              updateToolbarCounts();
+              continue;
+            }
+            const personRecord = {
+              username: person.username,
+              displayName: record.displayName || person.displayName || person.username,
+              email: record.email,
+              githubUrl: person.githubUrl,
+              avatarUrl: record.avatarUrl || null,
+              bio: record.bio || null,
+              location: record.location || null,
+              company: record.company || null,
+            };
+            const added = await saveCollected(personRecord, record);
+            if (added === false) {
+              skippedContacted += 1;
+              renderFoundList();
+              updateToolbarCounts();
+              continue;
+            }
+            if (!added) continue;
+            foundPeople.push(personRecord);
+            renderFoundList();
+            updateToolbarCounts();
+            updatePanel();
           } catch (error) {
             if (/login wall/i.test(error?.message || '')) {
               setCollectStatus('GitHub asked you to sign in. Sign in, then collect again.');
@@ -1348,14 +1418,14 @@
         }
         if (!fresh || !pageResult.hasNext || foundPeople.length >= goal || run !== collectRun) {
           if (run === collectRun && foundPeople.length < goal) {
-            setCollectStatus(`Search ended. Showing ${foundPeople.length} published emails from ${seen.size} profiles. GitHub lists about 1,000 people for one search, and only some publish an email.`);
+            setCollectStatus(`Search ended. Showing ${foundPeople.length} new emails from ${seen.size} profiles. Skipped ${skippedContacted} already contacted. GitHub lists about 1,000 people for one search, and only some publish an email.`);
           }
           break;
         }
         await sleep(400);
       }
       if (run === collectRun && foundPeople.length >= goal) {
-        setCollectStatus(`Showing ${foundPeople.length} published emails.`);
+        setCollectStatus(`Showing ${foundPeople.length} new emails. Skipped ${skippedContacted} already contacted.`);
       }
     } finally {
       if (run === collectRun) collecting = false;
