@@ -3,13 +3,14 @@ import { config } from '../config';
 import { prisma } from '../lib/prisma';
 import { createGmailDraft, sendGmailDraft, sendPlainEmail } from './gmail.service';
 import { AppError } from '../utils/errors';
-import { maskEmail, validateEmail } from '../utils/email';
+import { maskEmail, normalizeEmail, validateEmail } from '../utils/email';
 import { logger } from '../utils/logger';
 import { evaluateDraft, evaluateSend, startOfLocalDay } from '../utils/send-policy';
 import { transitionError } from '../utils/status';
 import { contextFromContact, hasUnresolved, interpolate } from '../utils/template';
 import { getTemplate } from './template.service';
 import { getSendSettings } from './settings.service';
+import { emailsAlreadyContacted } from './contact.service';
 
 let sendQueue: Promise<unknown> = Promise.resolve();
 
@@ -63,6 +64,10 @@ export async function createDraftForContact(
 
   const email = validateEmail(contact.email);
   if (!email.ok) throw new AppError(400, email.reason, 'INVALID_EMAIL');
+  const contacted = await emailsAlreadyContacted([email.email]);
+  if (contacted.has(email.email)) {
+    throw new AppError(400, 'This email address was already contacted. Nothing was sent.', 'ALREADY_CONTACTED');
+  }
 
   const open = await prisma.outreach.findFirst({
     where: { contactId, status: { in: ['DRAFTED', 'APPROVED'] } },
@@ -169,6 +174,10 @@ export async function sendOutreach(outreachId: string) {
       maxContactAttempts: config.maxContactAttempts,
     });
     if (!decision.ok) throw new AppError(400, decision.message, decision.code);
+    const contacted = await emailsAlreadyContacted([outreach.contact.email]);
+    if (contacted.has(normalizeEmail(outreach.contact.email))) {
+      throw new AppError(400, 'This email address was already contacted. Nothing was sent.', 'ALREADY_CONTACTED');
+    }
     if (config.outreachTestMode) {
       throw new AppError(
         400,
@@ -247,6 +256,7 @@ const SKIP_SEND_CODES = new Set([
   'NOT_APPROVED',
   'INVALID_EMAIL',
   'ALREADY_SENT',
+  'ALREADY_CONTACTED',
   'ATTEMPT_LIMIT',
   'DAILY_LIMIT',
   'COOLDOWN',
@@ -257,6 +267,11 @@ const SKIP_SEND_CODES = new Set([
 
 export async function createDraftsBulk(contactIds: string[], templateId: string) {
   const template = await getTemplate(templateId);
+  const known = await prisma.contact.findMany({
+    where: { id: { in: contactIds } },
+    select: { email: true },
+  });
+  const contactedEmails = await emailsAlreadyContacted(known.map((row) => row.email));
   const outreach = [];
   const failures: { contactId: string; username?: string; reason: string }[] = [];
   const skipped: { contactId: string; username?: string; email?: string; reason: string }[] = [];
@@ -270,6 +285,15 @@ export async function createDraftsBulk(contactIds: string[], templateId: string)
       }
       if (contact.status === 'DO_NOT_CONTACT' || contact.status === 'OPTED_OUT' || contact.status === 'SENT' || contact.status === 'REPLIED') {
         skipped.push({ contactId, username: contact.username, email: contact.email, reason: contact.status });
+        continue;
+      }
+      if (contactedEmails.has(normalizeEmail(contact.email))) {
+        skipped.push({
+          contactId,
+          username: contact.username,
+          email: contact.email,
+          reason: 'This email address was already contacted.',
+        });
         continue;
       }
       const decision = evaluateDraft({

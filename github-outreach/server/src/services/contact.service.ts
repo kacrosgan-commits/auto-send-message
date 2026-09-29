@@ -2,10 +2,10 @@ import type { Prisma } from '@prisma/client';
 import { config } from '../config';
 import { prisma } from '../lib/prisma';
 import { mergeContactMetadata, planContactSave } from '../utils/contact-plan';
-import { maskEmail, validateEmail } from '../utils/email';
+import { maskEmail, normalizeEmail, validateEmail } from '../utils/email';
 import { AppError } from '../utils/errors';
 import { logger } from '../utils/logger';
-import { startOfLocalDay } from '../utils/send-policy';
+import { contactRecordWasContacted, startOfLocalDay } from '../utils/send-policy';
 import { getSendSettings } from './settings.service';
 import { isDoNotContact, transitionError } from '../utils/status';
 import type { ContactStatus } from '../types';
@@ -208,6 +208,38 @@ export async function saveContactsBulk(items: unknown[]) {
   }
 
   return { success: true, created, duplicates, skipped, contacts, skippedItems };
+}
+
+export async function emailsAlreadyContacted(emails: string[]): Promise<Set<string>> {
+  const normalized = [...new Set(emails.map((email) => normalizeEmail(email)).filter(Boolean))];
+  if (!normalized.length) return new Set();
+  const contacts = await prisma.contact.findMany({
+    where: { email: { in: normalized } },
+    select: {
+      email: true,
+      status: true,
+      contactAttempts: true,
+      lastContactedAt: true,
+      outreaches: {
+        where: { status: 'SENT' },
+        select: { gmailMessageId: true },
+      },
+    },
+  });
+  const contacted = new Set<string>();
+  for (const contact of contacts) {
+    if (
+      contactRecordWasContacted({
+        status: contact.status,
+        contactAttempts: contact.contactAttempts,
+        lastContactedAt: contact.lastContactedAt,
+        sentMessageIds: contact.outreaches.map((row) => row.gmailMessageId),
+      })
+    ) {
+      contacted.add(normalizeEmail(contact.email));
+    }
+  }
+  return contacted;
 }
 
 export async function listContacts(filters: ContactFilters) {

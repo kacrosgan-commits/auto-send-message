@@ -122,6 +122,23 @@ export function evaluateDraft(input: {
   return { ok: true };
 }
 
+export function isDeliveredGmailId(id: string | null | undefined): boolean {
+  if (!id) return false;
+  return !id.startsWith('test-mode:') && !id.startsWith('test-draft:');
+}
+
+export function contactRecordWasContacted(contact: {
+  status: string;
+  contactAttempts: number;
+  lastContactedAt: Date | null;
+  sentMessageIds?: Array<string | null>;
+}): boolean {
+  if (contact.status === 'SENT' || contact.status === 'REPLIED') return true;
+  if (contact.contactAttempts > 0) return true;
+  if (contact.lastContactedAt) return true;
+  return (contact.sentMessageIds ?? []).some((id) => isDeliveredGmailId(id));
+}
+
 export function startOfLocalDay(now = new Date()): Date {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }

@@ -1,7 +1,9 @@
 import { prisma } from '../lib/prisma';
 import { AppError } from '../utils/errors';
+import { normalizeEmail } from '../utils/email';
 import { contextFromContact, hasUnresolved, interpolate } from '../utils/template';
 import { logger } from '../utils/logger';
+import { emailsAlreadyContacted } from './contact.service';
 
 const DEFAULT_TEMPLATE = {
   name: 'Quick question',
@@ -76,6 +78,7 @@ export async function previewTemplate(input: {
     where: { id: { in: input.contactIds } },
   });
   const byId = new Map(contacts.map((contact) => [contact.id, contact]));
+  const contacted = await emailsAlreadyContacted(contacts.map((contact) => contact.email));
 
   return input.contactIds.map((contactId) => {
     const contact = byId.get(contactId);
@@ -93,6 +96,7 @@ export async function previewTemplate(input: {
     const renderedSubject = interpolate(subject ?? '', context);
     const renderedBody = interpolate(body ?? '', context);
     const missing = [...new Set([...renderedSubject.missing, ...renderedBody.missing])];
+    const alreadyContacted = contacted.has(normalizeEmail(contact.email));
     return {
       contactId,
       name: contact.displayName || contact.username,
@@ -101,6 +105,7 @@ export async function previewTemplate(input: {
       subject: renderedSubject.text,
       body: renderedBody.text,
       missing,
+      alreadyContacted,
       blocked: hasUnresolved(renderedSubject.text) || hasUnresolved(renderedBody.text),
     };
   });

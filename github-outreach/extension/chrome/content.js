@@ -786,8 +786,11 @@
   function selectableProfiles() {
     return pageProfiles().filter((profile) => {
       if (!profile.email || profile.card.style.display === 'none') return false;
-      const status = contactsByEmail.get(String(profile.email).toLowerCase())?.status;
-      return status !== 'DO_NOT_CONTACT' && status !== 'OPTED_OUT';
+      const saved = contactsByEmail.get(String(profile.email).toLowerCase());
+      if (!saved) return true;
+      if (saved.status === 'DO_NOT_CONTACT' || saved.status === 'OPTED_OUT' || saved.status === 'SENT' || saved.status === 'REPLIED') return false;
+      if (Number(saved.contactAttempts) > 0 || saved.lastContactedAt) return false;
+      return true;
     });
   }
 
@@ -1043,7 +1046,8 @@
         contactsByEmail.set(String(contact.email).toLowerCase(), contact);
         savedEmails.add(String(contact.email).toLowerCase());
         const status = contact.status;
-        if (status === 'DO_NOT_CONTACT' || status === 'OPTED_OUT' || status === 'SENT') continue;
+        if (status === 'DO_NOT_CONTACT' || status === 'OPTED_OUT' || status === 'SENT' || status === 'REPLIED') continue;
+        if (Number(contact.contactAttempts) > 0 || contact.lastContactedAt) continue;
         saved.push(contact);
       }
     }
@@ -1265,7 +1269,11 @@
     if (!contact?.id) return;
     contactsByEmail.set(String(contact.email || record.email).toLowerCase(), contact);
     savedEmails.add(String(contact.email || record.email).toLowerCase());
-    if (contact.status === 'NEW' || contact.status === 'FAILED') collectedIds.push(contact.id);
+    const alreadyContacted = contact.status === 'SENT'
+      || contact.status === 'REPLIED'
+      || Number(contact.contactAttempts) > 0
+      || Boolean(contact.lastContactedAt);
+    if (!alreadyContacted && (contact.status === 'NEW' || contact.status === 'FAILED')) collectedIds.push(contact.id);
   }
 
   async function startCollect() {

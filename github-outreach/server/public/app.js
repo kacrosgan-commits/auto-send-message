@@ -231,7 +231,8 @@ function viewBody() {
 }
 
 function contactsView() {
-  const eligible = state.contacts.filter(canDraft);
+  const contacted = contactedEmailSet(state.contacts);
+  const eligible = state.contacts.filter((contact) => canDraft(contact, contacted));
   return h('section', {}, [
     h('div', { class: 'filters' }, [
       filterInput('q', 'Search name, username, email'),
@@ -256,7 +257,7 @@ function contactsView() {
         disabled: selectedContacts().length === 0,
         onclick: () => openPreview(selectedContacts().map((contact) => contact.id)),
       }, 'Create Drafts'),
-      h('span', { class: 'muted' }, `${selectedContacts().length} selected · ${eligible.length} ready to draft`),
+      h('span', { class: 'muted' }, `${selectedContacts().length} selected · ${eligible.length} ready to draft · already contacted addresses stay unchecked`),
     ]),
     state.contacts.length
       ? h('div', { class: 'table-wrap' }, [
@@ -284,22 +285,22 @@ function contactsView() {
                 h('th', {}, 'Action'),
               ]),
             ]),
-            h('tbody', {}, state.contacts.map(contactRow)),
+            h('tbody', {}, state.contacts.map((contact) => contactRow(contact, contacted))),
           ]),
         ])
       : h('div', { class: 'empty card' }, 'No contacts yet. Add someone from GitHub user search.'),
   ]);
 }
 
-function contactRow(contact) {
-  const draftable = canDraft(contact);
+function contactRow(contact, contacted = contactedEmailSet(state.contacts)) {
+  const draftable = canDraft(contact, contacted);
   return h('tr', {}, [
     h('td', {}, [
       h('input', {
         type: 'checkbox',
         disabled: !draftable,
         checked: state.selected.has(contact.id),
-        title: draftable ? 'Select for draft creation' : 'This contact cannot receive a new draft',
+        title: draftable ? 'Select for draft creation' : 'This address was already contacted or cannot receive a new draft',
         onchange: (event) => {
           if (event.target.checked) state.selected.add(contact.id);
           else state.selected.delete(contact.id);
@@ -674,8 +675,20 @@ async function openPreview(contactIds) {
       });
       previews.push(...(data.previews || []));
     }
-    state.banner = null;
-    state.modal = { type: 'preview', previews, progress: '' };
+    const ready = previews.filter((preview) => !preview.alreadyContacted);
+    const skipped = previews.length - ready.length;
+    if (!ready.length) {
+      state.banner = {
+        type: 'error',
+        text: 'Every selected address was already contacted. No drafts were created.',
+      };
+      render();
+      return;
+    }
+    state.banner = skipped
+      ? { type: 'ok', text: `Left out ${skipped} ${skipped === 1 ? 'address that was' : 'addresses that were'} already contacted.` }
+      : null;
+    state.modal = { type: 'preview', previews: ready, progress: '' };
     render();
   } catch (error) {
     state.banner = { type: 'error', text: error.message };
@@ -898,7 +911,7 @@ async function sendOneWithCooldown(id, onWait) {
         continue;
       }
       if (/Daily send limit/i.test(message)) return { status: 'limit', message };
-      if (/already been sent|do-not-contact|opted out|Only approved|valid public email|maximum number/i.test(message)) {
+      if (/already been sent|already contacted|do-not-contact|opted out|Only approved|valid public email|maximum number/i.test(message)) {
         return { status: 'skipped', message };
       }
       return { status: 'failed', message };
@@ -1108,11 +1121,30 @@ async function disconnect() {
 }
 
 function selectedContacts() {
-  return state.contacts.filter((contact) => state.selected.has(contact.id) && canDraft(contact));
+  const contacted = contactedEmailSet(state.contacts);
+  return state.contacts.filter((contact) => state.selected.has(contact.id) && canDraft(contact, contacted));
 }
 
-function canDraft(contact) {
-  return contact.status === 'NEW' || contact.status === 'FAILED';
+function contactedEmailSet(contacts) {
+  const emails = new Set();
+  contacts.forEach((contact) => {
+    if (wasContacted(contact) && contact.email) emails.add(String(contact.email).toLowerCase());
+  });
+  return emails;
+}
+
+function wasContacted(contact) {
+  return contact.status === 'SENT'
+    || contact.status === 'REPLIED'
+    || Number(contact.contactAttempts) > 0
+    || Boolean(contact.lastContactedAt);
+}
+
+function canDraft(contact, contacted = contactedEmailSet(state.contacts.concat(contact ? [contact] : []))) {
+  if (!contact || (contact.status !== 'NEW' && contact.status !== 'FAILED')) return false;
+  const email = String(contact.email || '').toLowerCase();
+  if (!email || contacted.has(email)) return false;
+  return true;
 }
 
 function filterInput(key, placeholder, type = 'search') {
