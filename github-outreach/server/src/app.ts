@@ -7,16 +7,17 @@ import { outreachRouter } from './routes/outreach.routes';
 import { templatesRouter } from './routes/templates.routes';
 import { errorMiddleware } from './middleware/error.middleware';
 import { securityMiddleware } from './middleware/security.middleware';
+import { config } from './config';
 import { getSummary } from './services/contact.service';
 
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '100kb' }));
+  app.use(express.json({ limit: '512kb' }));
   app.use(securityMiddleware);
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, status: 'online' });
+    res.json({ ok: true, status: 'online', testMode: config.outreachTestMode });
   });
   app.get('/api/stats', async (_req, res, next) => {
     try {

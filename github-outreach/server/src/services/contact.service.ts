@@ -183,6 +183,32 @@ export async function saveContact(input: ContactInput) {
   return { success: true, contact, created: true, duplicate: false, message: 'Added to outreach' };
 }
 
+export async function saveContactsBulk(items: unknown[]) {
+  const contacts = [];
+  let created = 0;
+  let duplicates = 0;
+  let skipped = 0;
+  const skippedItems: { index: number; reason: string }[] = [];
+
+  for (let index = 0; index < items.length; index += 1) {
+    try {
+      const input = normalizeContactPayload(items[index]);
+      const result = await saveContact(input);
+      contacts.push(result.contact);
+      if (result.created) created += 1;
+      else duplicates += 1;
+    } catch (error) {
+      skipped += 1;
+      skippedItems.push({
+        index,
+        reason: error instanceof Error ? error.message : 'Contact was skipped.',
+      });
+    }
+  }
+
+  return { success: true, created, duplicates, skipped, contacts, skippedItems };
+}
+
 export async function listContacts(filters: ContactFilters) {
   const where: Prisma.ContactWhereInput = {};
   if (filters.status) where.status = filters.status;

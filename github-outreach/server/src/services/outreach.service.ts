@@ -7,7 +7,8 @@ import { maskEmail, validateEmail } from '../utils/email';
 import { logger } from '../utils/logger';
 import { evaluateDraft, evaluateSend, startOfLocalDay } from '../utils/send-policy';
 import { transitionError } from '../utils/status';
-import { hasUnresolved } from '../utils/template';
+import { contextFromContact, hasUnresolved, interpolate } from '../utils/template';
+import { getTemplate } from './template.service';
 
 let sendQueue: Promise<unknown> = Promise.resolve();
 
@@ -161,7 +162,7 @@ export async function sendOutreach(outreachId: string) {
       sendsToday,
       maxSendsPerDay: config.maxSendsPerDay,
       lastSentAt: lastSent?.sentAt ?? null,
-      minSecondsBetweenSends: config.minSecondsBetweenSends,
+      minSecondsBetweenSends: config.outreachTestMode ? 0 : config.minSecondsBetweenSends,
       contactAttempts: outreach.contact.contactAttempts,
       maxContactAttempts: config.maxContactAttempts,
     });
@@ -171,7 +172,9 @@ export async function sendOutreach(outreachId: string) {
     }
 
     try {
-      const gmailMessageId = await sendGmailDraft(outreach.gmailDraftId);
+      const gmailMessageId = config.outreachTestMode
+        ? `test-mode:${outreachId}`
+        : await sendGmailDraft(outreach.gmailDraftId);
       const sentAt = new Date();
       const updated = await prisma.outreach.update({
         where: { id: outreachId },
@@ -187,8 +190,8 @@ export async function sendOutreach(outreachId: string) {
         },
       });
       logger.info(
-        { outreachId, contactId: outreach.contactId, email: maskEmail(outreach.contact.email) },
-        '[Gmail] Message sent',
+        { outreachId, contactId: outreach.contactId, email: maskEmail(outreach.contact.email), testMode: config.outreachTestMode },
+        config.outreachTestMode ? '[Gmail] Test mode simulated send' : '[Gmail] Message sent',
       );
       return updated;
     } catch (error) {
@@ -208,4 +211,162 @@ export async function sendOutreach(outreachId: string) {
       throw new AppError(502, message, 'SEND_FAILED');
     }
   });
+}
+
+const SKIP_SEND_CODES = new Set([
+  'OPTED_OUT',
+  'DO_NOT_CONTACT',
+  'NOT_APPROVED',
+  'INVALID_EMAIL',
+  'ALREADY_SENT',
+  'ATTEMPT_LIMIT',
+  'DAILY_LIMIT',
+  'COOLDOWN',
+  'STATUS',
+  'DRAFT_MISSING',
+]);
+
+export async function createDraftsBulk(contactIds: string[], templateId: string) {
+  const template = await getTemplate(templateId);
+  const outreach = [];
+  const failures: { contactId: string; username?: string; reason: string }[] = [];
+  const skipped: { contactId: string; username?: string; email?: string; reason: string }[] = [];
+
+  for (const contactId of contactIds) {
+    try {
+      const contact = await prisma.contact.findUnique({ where: { id: contactId } });
+      if (!contact) {
+        skipped.push({ contactId, reason: 'Contact not found.' });
+        continue;
+      }
+      if (contact.status === 'DO_NOT_CONTACT' || contact.status === 'OPTED_OUT' || contact.status === 'SENT' || contact.status === 'REPLIED') {
+        skipped.push({ contactId, username: contact.username, email: contact.email, reason: contact.status });
+        continue;
+      }
+      const decision = evaluateDraft({
+        status: contact.status,
+        email: contact.email,
+        contactAttempts: contact.contactAttempts,
+        maxContactAttempts: config.maxContactAttempts,
+      });
+      if (!decision.ok) {
+        skipped.push({ contactId, username: contact.username, email: contact.email, reason: decision.message });
+        continue;
+      }
+      const open = await prisma.outreach.findFirst({
+        where: { contactId, status: { in: ['DRAFTED', 'APPROVED'] } },
+        include: { contact: true },
+      });
+      if (open) {
+        skipped.push({ contactId, username: contact.username, email: contact.email, reason: 'Already drafted' });
+        continue;
+      }
+      const context = contextFromContact(contact);
+      const renderedSubject = interpolate(template.subject, context);
+      const renderedBody = interpolate(template.body, context);
+      if (renderedSubject.missing.length || renderedBody.missing.length || hasUnresolved(renderedSubject.text) || hasUnresolved(renderedBody.text)) {
+        failures.push({ contactId, username: contact.username, reason: 'Unresolved template fields.' });
+        continue;
+      }
+      let gmailDraftId = `test-draft:${contactId}`;
+      if (!config.outreachTestMode) {
+        gmailDraftId = await createGmailDraft({
+          to: contact.email,
+          subject: renderedSubject.text,
+          body: renderedBody.text,
+        });
+      }
+      const row = await prisma.outreach.create({
+        data: {
+          contactId,
+          templateId: template.id,
+          subject: renderedSubject.text,
+          body: renderedBody.text,
+          status: 'DRAFTED',
+          gmailDraftId,
+        },
+        include: { contact: true, template: { select: { id: true, name: true } } },
+      });
+      await prisma.contact.update({ where: { id: contactId }, data: { status: 'DRAFTED' } });
+      outreach.push(row);
+      logger.info({ contactId, outreachId: row.id, testMode: config.outreachTestMode }, '[Gmail] Draft created');
+    } catch (error) {
+      failures.push({
+        contactId,
+        reason: error instanceof Error ? error.message : 'Draft creation failed.',
+      });
+    }
+  }
+
+  return {
+    success: true,
+    testMode: config.outreachTestMode,
+    created: outreach.length,
+    failed: failures.length,
+    skipped: skipped.length,
+    outreach,
+    failures,
+    skippedItems: skipped,
+  };
+}
+
+export async function approveOutreachBulk(outreachIds: string[]) {
+  const approved = [];
+  const skipped: { outreachId: string; reason: string }[] = [];
+  for (const outreachId of outreachIds) {
+    const outreach = await prisma.outreach.findUnique({
+      where: { id: outreachId },
+      include: { contact: true },
+    });
+    if (!outreach) {
+      skipped.push({ outreachId, reason: 'Outreach message not found.' });
+      continue;
+    }
+    if (outreach.contact.status === 'OPTED_OUT' || outreach.contact.status === 'DO_NOT_CONTACT') {
+      skipped.push({ outreachId, reason: 'Do-not-contact.' });
+      continue;
+    }
+    if (outreach.status !== 'DRAFTED' && outreach.status !== 'FAILED') {
+      skipped.push({ outreachId, reason: `Cannot approve status ${outreach.status}.` });
+      continue;
+    }
+    const reason = transitionError(outreach.contact.status, 'APPROVED');
+    if (reason) {
+      skipped.push({ outreachId, reason });
+      continue;
+    }
+    const updated = await prisma.outreach.update({
+      where: { id: outreachId },
+      data: { status: 'APPROVED', approvedAt: new Date(), failureReason: null },
+      include: { contact: true },
+    });
+    await prisma.contact.update({ where: { id: outreach.contactId }, data: { status: 'APPROVED' } });
+    approved.push(updated);
+  }
+  return { success: true, approved: approved.length, skipped: skipped.length, outreach: approved, skippedItems: skipped };
+}
+
+export async function sendOutreachBulk(outreachIds: string[]) {
+  const sent = [];
+  const failed: { outreachId: string; reason: string }[] = [];
+  const skipped: { outreachId: string; reason: string; code?: string }[] = [];
+  for (const outreachId of outreachIds) {
+    try {
+      const updated = await sendOutreach(outreachId);
+      sent.push(updated);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Send failed.';
+      const code = error instanceof AppError ? error.code : undefined;
+      if (code && SKIP_SEND_CODES.has(code)) skipped.push({ outreachId, reason: message, code });
+      else failed.push({ outreachId, reason: message });
+    }
+  }
+  return {
+    success: true,
+    testMode: config.outreachTestMode,
+    message: config.outreachTestMode ? 'TEST MODE — no email was sent.' : 'Batch send finished.',
+    sent,
+    failed,
+    skipped,
+  };
 }

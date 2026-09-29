@@ -15,10 +15,22 @@ const corsMiddleware = cors({
 });
 
 function githubUserscriptAllowed(method: string, path: string): boolean {
-  if (method === 'GET' && (path === '/api/health' || path === '/api/stats' || path === '/api/contacts' || path === '/api/contacts/lookup')) {
+  if (method === 'GET' && (
+    path === '/api/health'
+    || path === '/api/stats'
+    || path === '/api/contacts'
+    || path === '/api/contacts/lookup'
+    || path === '/api/templates'
+  )) {
     return true;
   }
-  return method === 'POST' && path === '/api/contacts';
+  return method === 'POST' && (
+    path === '/api/contacts'
+    || path === '/api/contacts/bulk'
+    || path === '/api/outreach/bulk-draft'
+    || path === '/api/outreach/bulk-approve'
+    || path === '/api/outreach/bulk-send'
+  );
 }
 
 export function securityMiddleware(req: Request, res: Response, next: NextFunction): void {

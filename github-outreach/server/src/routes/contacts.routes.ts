@@ -9,6 +9,7 @@ import {
   lookupContacts,
   normalizeContactPayload,
   saveContact,
+  saveContactsBulk,
   updateContact,
 } from '../services/contact.service';
 import { maskEmail } from '../utils/email';
@@ -74,6 +75,33 @@ contactsRouter.get(
       to: optionalString(req.query.to),
     });
     res.json({ contacts });
+  }),
+);
+
+contactsRouter.post(
+  '/bulk',
+  asyncRoute(async (req, res) => {
+    const items = req.body?.contacts;
+    if (!Array.isArray(items) || items.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: 'VALIDATION_ERROR',
+        message: 'contacts must be a non-empty array.',
+        details: [{ path: 'contacts', message: 'contacts must be a non-empty array.' }],
+      });
+      return;
+    }
+    if (items.length > 50) {
+      res.status(400).json({
+        success: false,
+        error: 'VALIDATION_ERROR',
+        message: 'A batch can include at most 50 contacts.',
+        details: [{ path: 'contacts', message: 'A batch can include at most 50 contacts.' }],
+      });
+      return;
+    }
+    logger.info(`[Contacts] POST /api/contacts/bulk count=${items.length}`);
+    res.json(await saveContactsBulk(items));
   }),
 );
 

@@ -6,6 +6,7 @@ import { ensureDefaultTemplate } from './services/template.service';
 
 async function main(): Promise<void> {
   logger.info(`[Database] SQLite database: ${sqliteDatabasePath}`);
+  logger.info(`[Outreach] Test mode: ${config.outreachTestMode ? 'on' : 'off'}`);
   if (config.tokenEncryptionKey.includes('replace-with')) {
     logger.warn('TOKEN_ENCRYPTION_KEY is still the example value. Replace it before connecting Gmail.');
   }

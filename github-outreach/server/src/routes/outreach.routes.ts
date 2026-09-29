@@ -2,7 +2,15 @@ import { Router } from 'express';
 import type { OutreachStatus } from '@prisma/client';
 import { z } from 'zod';
 import { asyncRoute, validate } from '../middleware/validation.middleware';
-import { approveOutreach, createDraftForContact, listOutreach, sendOutreach } from '../services/outreach.service';
+import {
+  approveOutreach,
+  approveOutreachBulk,
+  createDraftForContact,
+  createDraftsBulk,
+  listOutreach,
+  sendOutreach,
+  sendOutreachBulk,
+} from '../services/outreach.service';
 import { OUTREACH_STATUSES } from '../types';
 
 export const outreachRouter = Router();
@@ -17,6 +25,43 @@ outreachRouter.get(
   asyncRoute(async (req, res) => {
     const status = typeof req.query.status === 'string' ? (req.query.status as OutreachStatus) : undefined;
     res.json({ outreach: await listOutreach(status) });
+  }),
+);
+
+outreachRouter.post(
+  '/bulk-draft',
+  validate({
+    body: z.object({
+      contactIds: z.array(z.string().min(1).max(64)).min(1).max(50),
+      templateId: z.string().min(1).max(64),
+    }),
+  }),
+  asyncRoute(async (req, res) => {
+    res.json(await createDraftsBulk(req.body.contactIds, req.body.templateId));
+  }),
+);
+
+outreachRouter.post(
+  '/bulk-approve',
+  validate({
+    body: z.object({
+      outreachIds: z.array(z.string().min(1).max(64)).min(1).max(50),
+    }),
+  }),
+  asyncRoute(async (req, res) => {
+    res.json(await approveOutreachBulk(req.body.outreachIds));
+  }),
+);
+
+outreachRouter.post(
+  '/bulk-send',
+  validate({
+    body: z.object({
+      outreachIds: z.array(z.string().min(1).max(64)).min(1).max(50),
+    }),
+  }),
+  asyncRoute(async (req, res) => {
+    res.json(await sendOutreachBulk(req.body.outreachIds));
   }),
 );
 
