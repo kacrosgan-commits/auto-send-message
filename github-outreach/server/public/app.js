@@ -476,8 +476,20 @@ function outreachView() {
             h('tbody', {}, state.outreach.map((item) =>
               h('tr', {}, [
                 h('td', {}, [
-                  h('div', {}, item.contact.displayName || item.contact.username),
-                  h('div', { class: 'handle' }, item.contact.email),
+                  h('div', { class: 'person' }, [
+                    avatarSrc(item.contact)
+                      ? h('img', {
+                        class: 'avatar',
+                        src: avatarSrc(item.contact),
+                        alt: '',
+                        onerror: (event) => { event.target.style.visibility = 'hidden'; },
+                      })
+                      : null,
+                    h('div', {}, [
+                      h('div', {}, item.contact.displayName || item.contact.username),
+                      h('div', { class: 'handle' }, item.contact.email),
+                    ]),
+                  ]),
                 ]),
                 h('td', {}, item.subject),
                 h('td', {}, badge(item.status)),
@@ -837,7 +849,7 @@ async function runApproveAndSendAll() {
     const testNote = state.auth?.testMode ? ' Test mode: no email was delivered.' : '';
     state.banner = {
       type: failed.length ? 'error' : 'ok',
-      text: `Sent ${sent.length}. Failed ${failed.length}. Skipped ${skipped.length}.${testNote}`,
+      text: `Sent ${sent.length}. Failed ${failed.length}. Skipped ${skipped.length}.${skipSummary(skipped)}${testNote}`,
     };
   } catch (error) {
     state.banner = { type: 'error', text: error.message };
@@ -945,6 +957,15 @@ async function sendOneWithCooldown(id, onWait) {
 
 function delay(ms) {
   return new Promise((resolve) => { window.setTimeout(resolve, ms); });
+}
+
+function skipSummary(skipped) {
+  const unique = [];
+  for (const message of skipped) {
+    const text = String(message || 'Skipped').replace(/\s+/g, ' ').trim();
+    if (text && !unique.includes(text)) unique.push(text);
+  }
+  return unique.length ? ` ${unique.slice(0, 2).join(' ')}` : '';
 }
 
 async function approve(id) {

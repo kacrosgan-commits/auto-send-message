@@ -5,7 +5,7 @@ import { createGmailDraft, sendGmailDraft, sendPlainEmail } from './gmail.servic
 import { AppError } from '../utils/errors';
 import { maskEmail, normalizeEmail, validateEmail } from '../utils/email';
 import { logger } from '../utils/logger';
-import { evaluateDraft, evaluateSend, startOfLocalDay } from '../utils/send-policy';
+import { deliveredAttempts, evaluateDraft, evaluateSend, isDeliveredGmailId, startOfLocalDay } from '../utils/send-policy';
 import { transitionError } from '../utils/status';
 import { contextFromContact, hasUnresolved, interpolate } from '../utils/template';
 import { getTemplate } from './template.service';
@@ -160,22 +160,29 @@ export async function sendOutreach(outreachId: string) {
       orderBy: { sentAt: 'desc' },
     });
 
+    const priorSends = await prisma.outreach.findMany({
+      where: { contactId: outreach.contactId, status: 'SENT' },
+      select: { gmailMessageId: true },
+    });
+    const delivered = deliveredAttempts([
+      outreach.gmailMessageId,
+      ...priorSends.map((row) => row.gmailMessageId),
+    ]);
     const limits = await getSendSettings();
     const decision = evaluateSend({
       outreachStatus: outreach.status,
       contactStatus: outreach.contact.status,
       email: outreach.contact.email,
-      alreadySent: Boolean(outreach.sentAt || outreach.gmailMessageId || outreach.status === 'SENT'),
+      alreadySent: isDeliveredGmailId(outreach.gmailMessageId),
       sendsToday,
       maxSendsPerDay: limits.maxSendsPerDay,
       lastSentAt: lastSent?.sentAt ?? null,
       minSecondsBetweenSends: config.outreachTestMode ? 0 : limits.minSecondsBetweenSends,
-      contactAttempts: outreach.contact.contactAttempts,
+      contactAttempts: delivered,
       maxContactAttempts: config.maxContactAttempts,
     });
     if (!decision.ok) throw new AppError(400, decision.message, decision.code);
-    const contacted = await emailsAlreadyContacted([outreach.contact.email]);
-    if (contacted.has(normalizeEmail(outreach.contact.email))) {
+    if (delivered > 0) {
       throw new AppError(400, 'This email address was already contacted. Nothing was sent.', 'ALREADY_CONTACTED');
     }
     if (config.outreachTestMode) {

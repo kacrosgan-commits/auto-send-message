@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { emailsMatch, maskEmail, normalizeEmail, validateEmail } from '../src/utils/email';
 import { mergeContactMetadata, planContactSave } from '../src/utils/contact-plan';
 import { buildEncodedMime, buildPlainTextMime } from '../src/utils/gmail-message';
-import { contactRecordWasContacted, evaluateDraft, evaluateSend } from '../src/utils/send-policy';
+import { contactRecordWasContacted, deliveredAttempts, evaluateDraft, evaluateSend } from '../src/utils/send-policy';
 import { canTransition, transitionError } from '../src/utils/status';
 import { contextFromContact, extractFirstName, hasUnresolved, interpolate } from '../src/utils/template';
 
@@ -154,6 +154,8 @@ describe('send approval and safety limits', () => {
     expect(contactRecordWasContacted({ status: 'SENT', contactAttempts: 1, lastContactedAt: new Date() })).toBe(true);
     expect(contactRecordWasContacted({ status: 'NEW', contactAttempts: 0, lastContactedAt: null, sentMessageIds: ['test-mode:1'] })).toBe(false);
     expect(contactRecordWasContacted({ status: 'APPROVED', contactAttempts: 0, lastContactedAt: null, sentMessageIds: ['18c5real'] })).toBe(true);
+    expect(deliveredAttempts([null, 'test-mode:1', 'test-draft:abc'])).toBe(0);
+    expect(deliveredAttempts(['18c5real', 'test-mode:1'])).toBe(1);
     expect(evaluateSend({ ...ready, alreadySent: true }).code).toBe('ALREADY_SENT');
     expect(evaluateSend({ ...ready, contactAttempts: 1 }).code).toBe('ATTEMPT_LIMIT');
     expect(evaluateSend({ ...ready, sendsToday: 20 }).code).toBe('DAILY_LIMIT');

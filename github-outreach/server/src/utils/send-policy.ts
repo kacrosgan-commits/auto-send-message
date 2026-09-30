@@ -127,6 +127,11 @@ export function isDeliveredGmailId(id: string | null | undefined): boolean {
   return !id.startsWith('test-mode:') && !id.startsWith('test-draft:');
 }
 
+/** A stored attempt or timestamp does not mean Gmail accepted the message. */
+export function deliveredAttempts(messageIds: Array<string | null | undefined>): number {
+  return messageIds.filter((id) => isDeliveredGmailId(id)).length;
+}
+
 export function contactRecordWasContacted(contact: {
   status: string;
   contactAttempts: number;
