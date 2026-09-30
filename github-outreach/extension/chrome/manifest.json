@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GitHub Outreach",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "Collect public GitHub profile emails into the local outreach server and send them on a schedule you set.",
   "permissions": ["storage"],
   "host_permissions": [

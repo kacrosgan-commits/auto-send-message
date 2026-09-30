@@ -83,6 +83,60 @@
   const contactedEmails = new Set();
   const contactedUsernames = new Set();
   let skippedContacted = 0;
+  let skippedCountry = 0;
+  const COUNTRIES = [
+    ['United States', ['United States', 'USA', 'U.S.A', 'U.S.']],
+    ['United Kingdom', ['United Kingdom', 'UK', 'U.K.', 'England', 'Scotland', 'Wales', 'Great Britain']],
+    ['Canada', ['Canada']],
+    ['Germany', ['Germany', 'Deutschland']],
+    ['France', ['France']],
+    ['India', ['India']],
+    ['Australia', ['Australia']],
+    ['Netherlands', ['Netherlands', 'The Netherlands', 'Holland']],
+    ['Spain', ['Spain', 'España']],
+    ['Italy', ['Italy', 'Italia']],
+    ['Brazil', ['Brazil', 'Brasil']],
+    ['Poland', ['Poland', 'Polska']],
+    ['Sweden', ['Sweden']],
+    ['Switzerland', ['Switzerland']],
+    ['Austria', ['Austria']],
+    ['Belgium', ['Belgium']],
+    ['Ireland', ['Ireland']],
+    ['Portugal', ['Portugal']],
+    ['Denmark', ['Denmark']],
+    ['Norway', ['Norway']],
+    ['Finland', ['Finland']],
+    ['Japan', ['Japan']],
+    ['South Korea', ['South Korea', 'Republic of Korea']],
+    ['Singapore', ['Singapore']],
+    ['Indonesia', ['Indonesia']],
+    ['Philippines', ['Philippines']],
+    ['Vietnam', ['Vietnam', 'Viet Nam']],
+    ['Thailand', ['Thailand']],
+    ['Malaysia', ['Malaysia']],
+    ['Pakistan', ['Pakistan']],
+    ['Bangladesh', ['Bangladesh']],
+    ['China', ['China']],
+    ['Taiwan', ['Taiwan']],
+    ['Hong Kong', ['Hong Kong']],
+    ['Israel', ['Israel']],
+    ['Turkey', ['Turkey', 'Türkiye']],
+    ['Ukraine', ['Ukraine']],
+    ['Czechia', ['Czechia', 'Czech Republic']],
+    ['Romania', ['Romania']],
+    ['Hungary', ['Hungary']],
+    ['Greece', ['Greece']],
+    ['Mexico', ['Mexico', 'México']],
+    ['Argentina', ['Argentina']],
+    ['Colombia', ['Colombia']],
+    ['Chile', ['Chile']],
+    ['South Africa', ['South Africa']],
+    ['Nigeria', ['Nigeria']],
+    ['Kenya', ['Kenya']],
+    ['Egypt', ['Egypt']],
+    ['New Zealand', ['New Zealand']],
+    ['United Arab Emirates', ['United Arab Emirates', 'UAE']],
+  ];
 
   function isUserSearch() {
     const url = new URL(location.href);
@@ -789,6 +843,7 @@
   function selectableProfiles() {
     return pageProfiles().filter((profile) => {
       if (!profile.email || profile.card.style.display === 'none') return false;
+      if (!locationMatches(profile.location, selectedCountry())) return false;
       const saved = contactsByEmail.get(String(profile.email).toLowerCase());
       if (!saved) return true;
       if (saved.status === 'DO_NOT_CONTACT' || saved.status === 'OPTED_OUT' || saved.status === 'SENT' || saved.status === 'REPLIED') return false;
@@ -844,6 +899,24 @@
       goal.min = '1';
       goal.max = '500';
       goal.value = '100';
+      const country = document.createElement('select');
+      country.id = 'gho-country';
+      const anyCountry = document.createElement('option');
+      anyCountry.value = '';
+      anyCountry.textContent = 'Any country';
+      country.append(anyCountry);
+      COUNTRIES.forEach(([name]) => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        country.append(option);
+      });
+      country.value = localStorage.getItem('githubOutreach.country') || '';
+      country.addEventListener('change', () => {
+        localStorage.setItem('githubOutreach.country', country.value);
+      });
+      const countryLabel = document.createElement('label');
+      countryLabel.append(document.createTextNode('Country '), country);
       const goalLabel = document.createElement('label');
       goalLabel.append(document.createTextNode('Public emails '), goal);
       const gap = document.createElement('input');
@@ -862,7 +935,7 @@
       daily.value = '100';
       const dailyLabel = document.createElement('label');
       dailyLabel.append(document.createTextNode('Max per day '), daily);
-      collectRow.append(goalLabel, gapLabel, dailyLabel);
+      collectRow.append(countryLabel, goalLabel, gapLabel, dailyLabel);
       const collectActions = document.createElement('div');
       collectActions.className = 'gho-toolbar-actions';
       collectActions.append(
@@ -923,7 +996,10 @@
     if (!node) return;
     const withEmail = pageProfiles().filter((profile) => profile.email).length;
     const goal = document.querySelector('#gho-goal')?.value || '100';
-    const skipped = skippedContacted ? ` Skipped ${skippedContacted} already contacted.` : '';
+    const skippedParts = [];
+    if (skippedContacted) skippedParts.push(`${skippedContacted} already contacted`);
+    if (skippedCountry) skippedParts.push(`${skippedCountry} outside the selected country`);
+    const skipped = skippedParts.length ? ` Skipped ${skippedParts.join(', ')}.` : '';
     node.textContent = `Showing ${foundPeople.length} / ${goal} new emails.${skipped} This GitHub page: ${panelCounts.results} people, ${withEmail} with a public email.`;
   }
 
@@ -1178,7 +1254,10 @@
     if (!box) return;
     const goal = Math.min(500, Math.max(1, Number(document.querySelector('#gho-goal')?.value) || 100));
     const title = box.querySelector('#gho-found-title');
-    const skipped = skippedContacted ? ` · skipped ${skippedContacted} already contacted` : '';
+    const skippedBits = [];
+    if (skippedContacted) skippedBits.push(`${skippedContacted} already contacted`);
+    if (skippedCountry) skippedBits.push(`${skippedCountry} outside the country`);
+    const skipped = skippedBits.length ? ` · skipped ${skippedBits.join(', ')}` : '';
     if (title) title.textContent = `New emails found: ${foundPeople.length} / ${goal}${skipped}`;
     const scroll = box.querySelector('#gho-found-scroll');
     if (!scroll) return;
@@ -1211,10 +1290,33 @@
     if (atBottom) scroll.scrollTop = scroll.scrollHeight;
   }
 
+  function selectedCountry() {
+    const name = document.querySelector('#gho-country')?.value || localStorage.getItem('githubOutreach.country') || '';
+    return COUNTRIES.find(([countryName]) => countryName === name) || null;
+  }
+
+  function normalizePlace(value) {
+    return ` ${String(value || '').toLowerCase().replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim()} `;
+  }
+
+  function locationMatches(locationText, country) {
+    if (!country) return true;
+    if (!String(locationText || '').trim()) return false;
+    const hay = normalizePlace(locationText);
+    return country[1].some((alias) => hay.includes(normalizePlace(alias)));
+  }
+
   async function fetchSearchPage(page) {
     const url = new URL(location.href);
     url.searchParams.set('type', 'users');
     url.searchParams.set('p', String(page));
+    const country = selectedCountry();
+    if (country) {
+      const query = url.searchParams.get('q') || '';
+      if (!/\blocation:/i.test(query)) {
+        url.searchParams.set('q', `${query} location:"${country[0]}"`.trim());
+      }
+    }
     const response = await fetch(url.toString(), {
       credentials: 'include',
       headers: { Accept: 'text/html' },
@@ -1332,6 +1434,7 @@
     collectedIds.length = 0;
     foundPeople.length = 0;
     skippedContacted = 0;
+    skippedCountry = 0;
     ensureFoundList();
     renderFoundList();
     const seen = new Set();
@@ -1343,7 +1446,9 @@
       collecting = false;
       return;
     }
-    setCollectStatus(`Reading this search for ${goal} new emails. ${contactedEmails.size} already contacted addresses will be skipped.`);
+    const country = selectedCountry();
+    const countryNote = country ? ` Only profiles whose location says ${country[0]} are kept.` : '';
+    setCollectStatus(`Reading this search for ${goal} new emails. ${contactedEmails.size} already contacted addresses will be skipped.${countryNote}`);
     try {
       for (let page = 1; page <= 100 && foundPeople.length < goal && run === collectRun; page += 1) {
         let pageResult;
@@ -1372,7 +1477,7 @@
           if (seen.has(person.username)) continue;
           seen.add(person.username);
           fresh += 1;
-          setCollectStatus(`Search page ${page}. Checked ${seen.size} profiles. New emails ${foundPeople.length} / ${goal}. Skipped ${skippedContacted} already contacted. ${person.username}`);
+          setCollectStatus(`Search page ${page}. Checked ${seen.size} profiles. New emails ${foundPeople.length} / ${goal}. Skipped ${skippedContacted} already contacted and ${skippedCountry} outside the country. ${person.username}`);
           try {
             if (isKnownContacted('', person.username)) {
               skippedContacted += 1;
@@ -1381,6 +1486,13 @@
               continue;
             }
             const record = await lookupCollectedProfile(person.username);
+            const country = selectedCountry();
+            if (country && !locationMatches(record.location, country)) {
+              skippedCountry += 1;
+              renderFoundList();
+              updateToolbarCounts();
+              continue;
+            }
             const email = String(record.email || '').toLowerCase();
             if (!email || foundPeople.some((row) => String(row.email).toLowerCase() === email)) continue;
             if (isKnownContacted(email, person.username)) {
@@ -1421,14 +1533,14 @@
         }
         if (!fresh || !pageResult.hasNext || foundPeople.length >= goal || run !== collectRun) {
           if (run === collectRun && foundPeople.length < goal) {
-            setCollectStatus(`Search ended. Showing ${foundPeople.length} new emails from ${seen.size} profiles. Skipped ${skippedContacted} already contacted. GitHub lists about 1,000 people for one search, and only some publish an email.`);
+            setCollectStatus(`Search ended. Showing ${foundPeople.length} new emails from ${seen.size} profiles. Skipped ${skippedContacted} already contacted and ${skippedCountry} outside the country. GitHub lists about 1,000 people for one search, and only some publish an email.`);
           }
           break;
         }
         await sleep(400);
       }
       if (run === collectRun && foundPeople.length >= goal) {
-        setCollectStatus(`Showing ${foundPeople.length} new emails. Skipped ${skippedContacted} already contacted.`);
+        setCollectStatus(`Showing ${foundPeople.length} new emails. Skipped ${skippedContacted} already contacted and ${skippedCountry} outside the country.`);
       }
     } finally {
       if (run === collectRun) collecting = false;
