@@ -266,7 +266,12 @@ function contactsView() {
         disabled: selectedContacts().length === 0,
         onclick: () => openPreview(selectedContacts().map((contact) => contact.id)),
       }, 'Create Drafts'),
-      h('span', { class: 'muted' }, `${selectedContacts().length} selected · ${eligible.length} ready to draft · already contacted addresses stay unchecked`),
+      h('button', {
+        class: 'btn-danger',
+        disabled: selectedIds().length === 0,
+        onclick: confirmDeleteSelected,
+      }, `Delete selected${selectedIds().length ? ` (${selectedIds().length})` : ''}`),
+      h('span', { class: 'muted' }, `${selectedIds().length} selected · ${eligible.length} ready to draft`),
     ]),
     state.contacts.length
       ? h('div', { class: 'table-wrap' }, [
@@ -276,9 +281,9 @@ function contactsView() {
                 h('th', {}, [
                   h('input', {
                     type: 'checkbox',
-                    checked: eligible.length > 0 && eligible.every((contact) => state.selected.has(contact.id)),
+                    checked: state.contacts.length > 0 && state.contacts.every((contact) => state.selected.has(contact.id)),
                     onchange: (event) => {
-                      eligible.forEach((contact) => {
+                      state.contacts.forEach((contact) => {
                         if (event.target.checked) state.selected.add(contact.id);
                         else state.selected.delete(contact.id);
                       });
@@ -307,9 +312,8 @@ function contactRow(contact, contacted = contactedEmailSet(state.contacts)) {
     h('td', {}, [
       h('input', {
         type: 'checkbox',
-        disabled: !draftable,
         checked: state.selected.has(contact.id),
-        title: draftable ? 'Select for draft creation' : 'This address was already contacted or cannot receive a new draft',
+        title: draftable ? 'Select' : 'Select. Create Drafts skips addresses that were already contacted.',
         onchange: (event) => {
           if (event.target.checked) state.selected.add(contact.id);
           else state.selected.delete(contact.id);
@@ -318,8 +322,18 @@ function contactRow(contact, contacted = contactedEmailSet(state.contacts)) {
       }),
     ]),
     h('td', {}, [
-      h('div', { class: 'name' }, contact.displayName || contact.username),
-      h('div', { class: 'handle' }, `@${contact.username}`),
+      h('div', { class: 'person' }, [
+        h('img', {
+          class: 'avatar',
+          src: avatarSrc(contact),
+          alt: '',
+          onerror: (event) => { event.target.style.visibility = 'hidden'; },
+        }),
+        h('div', {}, [
+          h('div', { class: 'name' }, contact.displayName || contact.username),
+          h('div', { class: 'handle' }, `@${contact.username}`),
+        ]),
+      ]),
     ]),
     h('td', {}, h('a', { href: contact.githubUrl, target: '_blank', rel: 'noreferrer' }, contact.username)),
     h('td', {}, contact.email),
@@ -1006,6 +1020,47 @@ async function markStatus(id, status) {
         state.banner = { type: 'error', text: error.message };
         state.modal = null;
         render();
+      }
+    },
+  };
+  render();
+}
+
+function selectedIds() {
+  return state.contacts.filter((contact) => state.selected.has(contact.id)).map((contact) => contact.id);
+}
+
+function avatarSrc(contact) {
+  if (contact.avatarUrl) return contact.avatarUrl;
+  if (contact.username) return `https://github.com/${encodeURIComponent(contact.username)}.png?size=64`;
+  return '';
+}
+
+function confirmDeleteSelected() {
+  const ids = selectedIds();
+  if (!ids.length) return;
+  state.modal = {
+    type: 'confirm',
+    title: 'Delete selected contacts',
+    text: `Delete ${ids.length} contact${ids.length === 1 ? '' : 's'} and their local outreach history? This does not delete anything from Gmail.`,
+    confirmLabel: 'Delete selected',
+    onConfirm: async () => {
+      state.busy = true;
+      render();
+      try {
+        const result = await api('/api/contacts/bulk-delete', {
+          method: 'POST',
+          body: JSON.stringify({ contactIds: ids }),
+        });
+        ids.forEach((id) => state.selected.delete(id));
+        state.modal = null;
+        state.banner = { type: 'ok', text: `Deleted ${result.deleted} contact${result.deleted === 1 ? '' : 's'}.` };
+      } catch (error) {
+        state.banner = { type: 'error', text: error.message };
+        state.modal = null;
+      } finally {
+        state.busy = false;
+        await refreshAll();
       }
     },
   };

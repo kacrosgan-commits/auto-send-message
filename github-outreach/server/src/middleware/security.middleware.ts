@@ -52,7 +52,7 @@ export function securityMiddleware(req: Request, res: Response, next: NextFuncti
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' https://avatars.githubusercontent.com data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' https://avatars.githubusercontent.com https://github.com data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
   );
   res.setHeader('Cache-Control', 'no-store');
   // Chrome blocks public sites such as github.com from calling localhost

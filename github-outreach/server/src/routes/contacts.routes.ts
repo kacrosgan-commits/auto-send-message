@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { asyncRoute, validate } from '../middleware/validation.middleware';
 import {
   deleteContact,
+  deleteContacts,
   getContact,
   getSummary,
   listContactedAddresses,
@@ -103,6 +104,19 @@ contactsRouter.post(
     }
     logger.info(`[Contacts] POST /api/contacts/bulk count=${items.length}`);
     res.json(await saveContactsBulk(items));
+  }),
+);
+
+contactsRouter.post(
+  '/bulk-delete',
+  validate({
+    body: z.object({
+      contactIds: z.array(z.string().min(1).max(64)).min(1).max(500),
+    }),
+  }),
+  asyncRoute(async (req, res) => {
+    const deleted = await deleteContacts(req.body.contactIds);
+    res.json({ success: true, deleted });
   }),
 );
 

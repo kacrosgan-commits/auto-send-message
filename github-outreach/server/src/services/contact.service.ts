@@ -348,6 +348,14 @@ export async function deleteContact(id: string) {
   logger.info({ contactId: id }, '[Contact] Deleted');
 }
 
+export async function deleteContacts(ids: string[]) {
+  const unique = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+  if (!unique.length) return 0;
+  const result = await prisma.contact.deleteMany({ where: { id: { in: unique } } });
+  logger.info({ count: result.count }, '[Contact] Deleted selected contacts');
+  return result.count;
+}
+
 export async function listContactedAddresses(): Promise<{ emails: string[]; usernames: string[] }> {
   const contacts = await prisma.contact.findMany({
     where: {
